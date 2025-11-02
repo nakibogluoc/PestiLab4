@@ -237,6 +237,70 @@ export default function RecordsPage() {
     });
   };
 
+  // Client-side export handlers
+  const handleClientExportLabelsPDF = () => {
+    try {
+      // Transform labels to match expected format
+      const rows = labels.map(label => ({
+        date: label.date || new Date(label.created_at).toLocaleDateString() || "",
+        label_code: label.label_code || "",
+        compound: label.compound_name || "",
+        cas: label.cas_number || "",
+        concentration: label.concentration || "",
+        prepared_by: label.prepared_by || "",
+        qr_data: label.qr_data || "",
+      }));
+      
+      exportLabelsToPDF(rows);
+      toast.success('Labels exported as PDF successfully (client-side)');
+    } catch (error) {
+      console.error('Client-side PDF export error:', error);
+      toast.error('Failed to export labels as PDF (client-side)');
+    }
+  };
+
+  const handleClientExportLabelsWord = () => {
+    try {
+      // Transform labels to match expected format
+      const rows = labels.map(label => ({
+        date: label.date || new Date(label.created_at).toLocaleDateString() || "",
+        label_code: label.label_code || "",
+        compound: label.compound_name || "",
+        cas: label.cas_number || "",
+        concentration: label.concentration || "",
+        prepared_by: label.prepared_by || "",
+        qr_data: label.qr_data || "",
+      }));
+      
+      exportLabelsToWord(rows);
+      toast.success('Labels exported as Word document successfully (client-side)');
+    } catch (error) {
+      console.error('Client-side Word export error:', error);
+      toast.error('Failed to export labels as Word document (client-side)');
+    }
+  };
+
+  const handleClientExportLabelsZIP = () => {
+    try {
+      // Transform labels to match expected format
+      const rows = labels.map(label => ({
+        date: label.date || new Date(label.created_at).toLocaleDateString() || "",
+        label_code: label.label_code || "",
+        compound: label.compound_name || "",
+        cas: label.cas_number || "",
+        concentration: label.concentration || "",
+        prepared_by: label.prepared_by || "",
+        qr_data: label.qr_data || "",
+      }));
+      
+      exportLabelsToZIP(rows);
+      toast.success('Labels exported as ZIP successfully (client-side)');
+    } catch (error) {
+      console.error('Client-side ZIP export error:', error);
+      toast.error('Failed to export labels as ZIP (client-side)');
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen"><div className="spinner"></div></div>;
   }
