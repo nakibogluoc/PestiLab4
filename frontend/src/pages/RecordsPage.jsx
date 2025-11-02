@@ -29,13 +29,13 @@ export default function RecordsPage() {
 
   const fetchData = async () => {
     try {
-      // Try new envelope format first, fallback to direct format
-      const usagesResponse = await axios.get(`${API}/usages`);
+      // Use the new weighings endpoint that returns envelope format
+      const weighingsResponse = await axios.get(`${API}/weighings`);
       const labelsResponse = await axios.get(`${API}/labels`);
       const compoundsResponse = await axios.get(`${API}/compounds`);
       
-      // Handle both envelope and direct response formats
-      const usagesData = usagesResponse.data?.data || usagesResponse.data || [];
+      // Handle envelope format from weighings endpoint
+      const usagesData = weighingsResponse.data?.data || [];
       const labelsData = labelsResponse.data?.data || labelsResponse.data || [];
       const compoundsData = compoundsResponse.data?.data || compoundsResponse.data || [];
       
@@ -43,6 +43,12 @@ export default function RecordsPage() {
       setLabels(Array.isArray(labelsData) ? labelsData : []);
       setCompounds(Array.isArray(compoundsData) ? compoundsData : []);
       setFilteredUsages(Array.isArray(usagesData) ? usagesData : []);
+      
+      console.log('Records loaded:', {
+        usages: usagesData.length,
+        labels: labelsData.length,
+        compounds: compoundsData.length
+      });
     } catch (error) {
       console.error('Failed to load records:', error);
       toast.error('Failed to load records. Please refresh the page.');
