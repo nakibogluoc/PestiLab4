@@ -29,17 +29,28 @@ export default function RecordsPage() {
 
   const fetchData = async () => {
     try {
-      const [usagesRes, labelsRes, compoundsRes] = await Promise.all([
-        axios.get(`${API}/usages`),
-        axios.get(`${API}/labels`),
-        axios.get(`${API}/compounds`)
-      ]);
-      setUsages(usagesRes.data);
-      setLabels(labelsRes.data);
-      setCompounds(compoundsRes.data);
-      setFilteredUsages(usagesRes.data);
+      // Try new envelope format first, fallback to direct format
+      const usagesResponse = await axios.get(`${API}/usages`);
+      const labelsResponse = await axios.get(`${API}/labels`);
+      const compoundsResponse = await axios.get(`${API}/compounds`);
+      
+      // Handle both envelope and direct response formats
+      const usagesData = usagesResponse.data?.data || usagesResponse.data || [];
+      const labelsData = labelsResponse.data?.data || labelsResponse.data || [];
+      const compoundsData = compoundsResponse.data?.data || compoundsResponse.data || [];
+      
+      setUsages(Array.isArray(usagesData) ? usagesData : []);
+      setLabels(Array.isArray(labelsData) ? labelsData : []);
+      setCompounds(Array.isArray(compoundsData) ? compoundsData : []);
+      setFilteredUsages(Array.isArray(usagesData) ? usagesData : []);
     } catch (error) {
-      toast.error('Failed to load records');
+      console.error('Failed to load records:', error);
+      toast.error('Failed to load records. Please refresh the page.');
+      // Set empty arrays to prevent crashes
+      setUsages([]);
+      setLabels([]);
+      setCompounds([]);
+      setFilteredUsages([]);
     } finally {
       setLoading(false);
     }
