@@ -280,7 +280,7 @@ export default function WeighingPageEnhanced({ user }) {
                   />
                 </div>
                 <div className=\"space-y-2\">
-                  <Label>Solvent Density \u03c1(T) (g/mL)</Label>
+                  <Label>Solvent Density ρ(T) (g/mL)</Label>
                   <Input
                     type=\"number\"
                     value={solventDensity}
