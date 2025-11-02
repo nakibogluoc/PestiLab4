@@ -242,11 +242,22 @@ export default function WeighingPageEnhanced({ user }) {
                   <PopoverContent className="w-full p-0">
                     <Command>
                       <CommandInput 
-                        placeholder="Search by name or CAS..." 
+                        placeholder="Search by name or CAS (min 2 characters)..." 
                         value={searchValue}
-                        onValueChange={setSearchValue}
+                        onValueChange={(value) => {
+                          setSearchValue(value);
+                          if (value.length >= 2) {
+                            searchCompounds(value);
+                          } else if (value.length === 0) {
+                            fetchCompounds();
+                          }
+                        }}
                       />
-                      <CommandEmpty>No compound found.</CommandEmpty>
+                      <CommandEmpty>
+                        {searchValue.length < 2 
+                          ? "Type at least 2 characters to search" 
+                          : "No compound found"}
+                      </CommandEmpty>
                       <CommandGroup className="max-h-64 overflow-auto">
                         {filteredCompounds.map((compound) => (
                           <CommandItem
