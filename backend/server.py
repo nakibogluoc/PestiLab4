@@ -1634,7 +1634,23 @@ async def export_labels_docx_zip(
         labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
         
         if not labels:
-            raise HTTPException(status_code=404, detail="No labels found")
+            # Return empty ZIP with message file instead of error
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                # Create a simple text file with message
+                message = "No labels found matching the criteria."
+                zip_file.writestr("no_labels_found.txt", message)
+            
+            zip_buffer.seek(0)
+            
+            timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+            filename = f"Labels_{timestamp}.zip"
+            
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
         
         # Create ZIP file
         zip_buffer = BytesIO()
