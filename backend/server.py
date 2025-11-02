@@ -132,10 +132,10 @@ class SolventDensityCreate(BaseModel):
 
 class WeighingInput(BaseModel):
     compound_id: str
-    weighed_amount: float
-    weighed_unit: str = "mg"
-    prepared_volume: float
-    volume_unit: str = "mL"
+    weighed_amount: float  # mg
+    purity: float = 100.0  # %
+    target_concentration: float  # mg/L or mg/kg
+    concentration_mode: str = "mg/L"  # "mg/L" or "mg/kg"
     temperature_c: float = 25.0
     solvent: Optional[str] = None
 
