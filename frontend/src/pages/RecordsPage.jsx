@@ -431,72 +431,8 @@ export default function RecordsPage() {
           {/* Labels Tab */}
           <TabsContent value="labels" className="space-y-6">
             <Card className="shadow-soft">
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader>
                 <CardTitle>Labels ({labels.length})</CardTitle>
-                <div className="flex flex-col gap-3">
-                  {/* Server-side exports */}
-                  <div className="flex gap-2 items-center">
-                    <span className="text-xs text-gray-500 mr-2">Server Export:</span>
-                    <Button
-                      onClick={handleExportLabelsPDF}
-                      className="bg-red-600 hover:bg-red-700"
-                      size="sm"
-                      data-testid="export-labels-pdf-button"
-                    >
-                      <FileImage className="w-4 h-4 mr-2" />
-                      PDF
-                    </Button>
-                    <Button
-                      onClick={handleExportLabelsDOCX}
-                      className="bg-blue-600 hover:bg-blue-700"
-                      size="sm"
-                      data-testid="export-labels-docx-button"
-                    >
-                      <FileText className="w-4 h-4 mr-2" />
-                      Word
-                    </Button>
-                    <Button
-                      onClick={handleExportLabelsDOCXZip}
-                      variant="outline"
-                      size="sm"
-                      data-testid="export-labels-zip-button"
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      ZIP
-                    </Button>
-                  </div>
-                  {/* Client-side exports */}
-                  <div className="flex gap-2 items-center">
-                    <span className="text-xs text-gray-500 mr-2">Client Export:</span>
-                    <Button
-                      onClick={handleClientExportLabelsPDF}
-                      className="bg-red-500 hover:bg-red-600"
-                      size="sm"
-                      data-testid="export-labels-pdf-client-button"
-                    >
-                      <FileImage className="w-4 h-4 mr-2" />
-                      PDF
-                    </Button>
-                    <Button
-                      onClick={handleClientExportLabelsWord}
-                      className="bg-blue-500 hover:bg-blue-600"
-                      size="sm"
-                      data-testid="export-labels-word-client-button"
-                    >
-                      <FileText className="w-4 h-4 mr-2" />
-                      Word
-                    </Button>
-                    <Button
-                      onClick={handleClientExportLabelsZIP}
-                      variant="outline"
-                      size="sm"
-                      data-testid="export-labels-zip-client-button"
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      ZIP
-                    </Button>
-                  </div>
-                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
