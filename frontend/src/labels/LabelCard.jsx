@@ -1,6 +1,7 @@
 import React from "react";
 import JsBarcode from "jsbarcode";
 import { QRCodeCanvas } from "qrcode.react";
+import { formatNumber } from "../utils/formatNumber";
 
 function mmToPx(mm, dpi, scale=1) { return Math.round((mm/25.4)*dpi*scale); }
 
@@ -31,11 +32,15 @@ export default function LabelCard({ data, profile }) {
     } catch {}
   }, [barcodeRef, data?.label_code, barcodeFormat, barcodeHeight, density, scale]);
 
+  // Clean concentration value and format it
+  const cleanConc = String(data.actual_conc || "").replace(/\s*ppm/i, "");
+  const formattedConc = formatNumber(cleanConc);
+
   return (
     <div style={outerStyle}>
       <div style={{fontWeight:600,fontSize:"3.3mm"}}>{data.compound_name || ""}</div>
       <div style={{fontSize:"2.7mm",lineHeight:1.2,color:"#333"}}>
-        CAS: {data.cas || "-"} • Conc.: {String(data.actual_conc).replace(/\s*ppm/i,"")} ppm<br/>
+        CAS: {data.cas || "-"} • Conc.: {formattedConc} ppm<br/>
         Date: {data.date || "-"} • Prepared by: {data.prepared_by || "-"}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:"2mm",marginTop:"1mm"}}>
