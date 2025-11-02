@@ -71,25 +71,28 @@ function App() {
   }
 
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={
-            user ? <Navigate to="/" /> : <LoginPage onLogin={handleLogin} />
-          } />
-          
-          <Route path="/" element={
-            user ? <Layout user={user} onLogout={handleLogout} /> : <Navigate to="/login" />
-          }>
-            <Route index element={<DashboardPage user={user} />} />
-            <Route path="compounds" element={<CompoundsPage user={user} />} />
-            <Route path="weighing" element={<WeighingPageEnhanced user={user} />} />
-            <Route path="records" element={<RecordsPage user={user} />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-      <Toaster position="top-right" richColors />
-    </div>
+    <LabelReprintProvider>
+      <div className="App">
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={
+              user ? <Navigate to="/" /> : <LoginPage onLogin={handleLogin} />
+            } />
+            
+            <Route path="/" element={
+              user ? <Layout user={user} onLogout={handleLogout} /> : <Navigate to="/login" />
+            }>
+              <Route index element={<DashboardPage user={user} />} />
+              <Route path="compounds" element={<CompoundsPage user={user} />} />
+              <Route path="weighing" element={<WeighingPageEnhanced user={user} />} />
+              <Route path="records" element={<RecordsPage user={user} />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+        <Toaster position="top-right" richColors />
+        <LabelReprintDialog />
+      </div>
+    </LabelReprintProvider>
   );
 }
 
