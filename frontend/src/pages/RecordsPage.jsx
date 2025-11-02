@@ -107,13 +107,133 @@ export default function RecordsPage() {
   };
 
   const handleExportUsages = () => {
-    exportToCSV(filteredUsages, 'weighing_records.csv');
-    toast.success('Usages exported successfully');
+    const params = new URLSearchParams();
+    if (filterCompound !== 'all') params.append('compound_id', filterCompound);
+    if (searchQuery) params.append('search_query', searchQuery);
+    
+    const token = localStorage.getItem('token');
+    const url = `${API}/weighings/export.xlsx?${params.toString()}`;
+    
+    // Create temporary link to download with auth header
+    fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    .then(response => response.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `WeighingRecords_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Weighing records exported successfully');
+    })
+    .catch(error => {
+      console.error('Export error:', error);
+      toast.error('Failed to export weighing records');
+    });
   };
 
   const handleExportLabels = () => {
     exportToCSV(labels, 'labels.csv');
     toast.success('Labels exported successfully');
+  };
+
+  const handleExportLabelsPDF = () => {
+    const params = new URLSearchParams();
+    if (filterCompound !== 'all') params.append('compound_id', filterCompound);
+    if (searchQuery) params.append('search_query', searchQuery);
+    
+    const token = localStorage.getItem('token');
+    const url = `${API}/labels/export.pdf?${params.toString()}`;
+    
+    fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    .then(response => response.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Labels_${new Date().toISOString().slice(0,10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Labels exported as PDF successfully');
+    })
+    .catch(error => {
+      console.error('Export error:', error);
+      toast.error('Failed to export labels as PDF');
+    });
+  };
+
+  const handleExportLabelsDOCX = () => {
+    const params = new URLSearchParams();
+    if (filterCompound !== 'all') params.append('compound_id', filterCompound);
+    if (searchQuery) params.append('search_query', searchQuery);
+    
+    const token = localStorage.getItem('token');
+    const url = `${API}/labels/export.docx?${params.toString()}`;
+    
+    fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    .then(response => response.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Labels_${new Date().toISOString().slice(0,10)}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Labels exported as Word document successfully');
+    })
+    .catch(error => {
+      console.error('Export error:', error);
+      toast.error('Failed to export labels as Word document');
+    });
+  };
+
+  const handleExportLabelsDOCXZip = () => {
+    const params = new URLSearchParams();
+    if (filterCompound !== 'all') params.append('compound_id', filterCompound);
+    if (searchQuery) params.append('search_query', searchQuery);
+    
+    const token = localStorage.getItem('token');
+    const url = `${API}/labels/export-docx.zip?${params.toString()}`;
+    
+    fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    .then(response => response.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Labels_${new Date().toISOString().slice(0,10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Labels exported as ZIP successfully');
+    })
+    .catch(error => {
+      console.error('Export error:', error);
+      toast.error('Failed to export labels as ZIP');
+    });
   };
 
   if (loading) {
