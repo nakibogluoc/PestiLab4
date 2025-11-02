@@ -1,6 +1,6 @@
 // frontend/src/utils/exporters.js
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, WidthType, TextRun } from "docx";
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
