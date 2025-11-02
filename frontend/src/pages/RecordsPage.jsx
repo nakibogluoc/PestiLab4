@@ -302,8 +302,8 @@ export default function RecordsPage() {
                   className="bg-green-600 hover:bg-green-700"
                   data-testid="export-usages-button"
                 >
-                  <Download className="w-4 h-4 mr-2" />
-                  Export CSV
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Export Excel
                 </Button>
               </CardHeader>
               <CardContent>
