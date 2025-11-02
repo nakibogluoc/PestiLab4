@@ -75,6 +75,23 @@ export default function WeighingPageEnhanced({ user }) {
     }
   };
 
+  const searchCompounds = async (query) => {
+    if (query.length < 2) {
+      setCompounds([]);
+      return;
+    }
+    
+    try {
+      const response = await axios.get(`${API}/search/fuzzy`, {
+        params: { q: query, limit: 50 }
+      });
+      setCompounds(response.data.compounds || []);
+    } catch (error) {
+      console.error('Search error:', error);
+      setCompounds([]);
+    }
+  };
+
   const calculateDensity = async () => {
     try {
       const response = await axios.get(
