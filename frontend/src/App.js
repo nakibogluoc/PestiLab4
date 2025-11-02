@@ -12,6 +12,8 @@ import CompoundsPage from "@/pages/CompoundsPage";
 import WeighingPageEnhanced from "@/pages/WeighingPageEnhanced";
 import RecordsPage from "@/pages/RecordsPage";
 import Layout from "@/components/Layout";
+import { LabelReprintProvider } from "@/components/LabelReprintProvider";
+import LabelReprintDialog from "@/components/LabelReprintDialog";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
