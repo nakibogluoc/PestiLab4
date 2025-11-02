@@ -454,7 +454,7 @@ export default function WeighingPageEnhanced({ user }) {
                       CAS: {result.label.cas_number} • Conc.: {result.label.concentration}
                     </p>
                     <p className=\"text-xs\" style={{ fontSize: '6pt' }}>
-                      Date: {result.label.date} \u2022 Prepared by: {result.label.prepared_by}
+                      Date: {result.label.date} • Prepared by: {result.label.prepared_by}
                     </p>
                   </div>
                   <div className=\"flex items-end justify-between\">
