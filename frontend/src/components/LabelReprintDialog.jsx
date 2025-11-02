@@ -38,7 +38,7 @@ export default function LabelReprintDialog() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-emerald-900">
               <div>
                 <div className="text-sm opacity-70">Actual Concentration:</div>
-                <div className="text-2xl font-semibold">{formatNumber(data.actual_conc)} ppm</div>
+                <div className="text-2xl font-semibold">{formatNumber(String(data.actual_conc || "").replace(/\s*ppm/i, ""))} ppm</div>
               </div>
               <div>
                 <div className="text-sm opacity-70">Required Volume:</div>
