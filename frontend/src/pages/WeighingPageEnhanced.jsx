@@ -130,11 +130,11 @@ export default function WeighingPageEnhanced({ user }) {
     try {
       const response = await axios.post(`${API}/weighing`, {
         compound_id: selectedCompound.id,
-        weighed_amount: parseFloat(weighedAmount),
-        purity: parseFloat(purity),
-        target_concentration: parseFloat(targetConcentration),
+        weighed_amount: parseNumeric(weighedAmount),
+        purity: parseNumeric(purity),
+        target_concentration: parseNumeric(targetConcentration),
         concentration_mode: concentrationMode,
-        temperature_c: parseFloat(temperature),
+        temperature_c: parseNumeric(temperature),
         solvent: solvent
       });
 
