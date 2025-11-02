@@ -124,10 +124,10 @@ export default function DashboardPage() {
                         <td className="font-medium">{compound.name}</td>
                         <td className="font-mono text-sm">{compound.cas_number}</td>
                         <td className="critical-stock">
-                          {compound.stock_value.toFixed(2)} {compound.stock_unit}
+                          {toFixedSafe(compound.stock_value, 2)} {compound.stock_unit}
                         </td>
                         <td className="text-gray-600">
-                          {compound.critical_value.toFixed(2)} {compound.critical_unit}
+                          {toFixedSafe(compound.critical_value, 2)} {compound.critical_unit}
                         </td>
                       </tr>
                     ))}
