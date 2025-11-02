@@ -102,56 +102,56 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Verify that export toolbars have been removed from the Records page"
+user_problem_statement: "Verify the Records page with restored Weighing Records Export Excel functionality and new Reprint functionality on Labels"
 
 frontend:
-  - task: "Export Toolbar Removal - Weighing Records Tab"
+  - task: "Weighing Records Export Excel Button Restoration"
     implemented: true
-    working: true
+    working: "NA"
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
-        - working: true
-          agent: "testing"
-          comment: "Successfully verified that Export Excel button has been removed from Weighing Records tab. No export buttons found in the header or anywhere in the tab. Table displays correctly with 31 records, search and filter functionality works properly."
+        - working: "NA"
+          agent: "main"
+          comment: "Export Excel button has been restored to Weighing Records tab header. Button should be present and functional for exporting weighing records to Excel format."
 
-  - task: "Export Toolbar Removal - Labels Tab"
+  - task: "Labels Tab Server/Client Export Toolbars Removal"
     implemented: true
-    working: true
+    working: "NA"
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
-        - working: true
-          agent: "testing"
-          comment: "Successfully verified that both Server Export and Client Export toolbars have been removed from Labels tab. No PDF, Word, ZIP, or any export buttons found. Labels table displays correctly with 31 labels and all columns intact."
+        - working: "NA"
+          agent: "main"
+          comment: "Server Export and Client Export toolbars should remain removed from Labels tab. No bulk PDF/Word/ZIP buttons should be present in the header."
 
-  - task: "UI Layout and Cleanup"
+  - task: "Labels Tab Per-Row Reprint Functionality"
     implemented: true
-    working: true
+    working: "NA"
+    file: "/app/frontend/src/components/ReprintMenu.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added per-row Reprint button in Actions column for each label. Dropdown menu should provide PDF/Word/ZIP reprint options for individual labels."
+
+  - task: "Records Page Data Display and Navigation"
+    implemented: true
+    working: "NA"
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
-        - working: true
-          agent: "testing"
-          comment: "UI layout is clean and intact after export toolbar removal. No broken layouts or spacing issues. Page renders properly with correct tab navigation. No console errors detected during testing."
-
-  - task: "Records Page Navigation and Functionality"
-    implemented: true
-    working: true
-    file: "/app/frontend/src/pages/RecordsPage.jsx"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-        - working: true
-          agent: "testing"
-          comment: "Records page navigation works correctly. Both Weighing Records and Labels tabs function properly. Search and filter functionality preserved. Data loading works correctly (31 weighing records, 31 labels, 995 compounds)."
+        - working: "NA"
+          agent: "main"
+          comment: "Records page should display 31 weighing records and 31 labels correctly with proper tab navigation and search/filter functionality."
 
 metadata:
   created_by: "testing_agent"
