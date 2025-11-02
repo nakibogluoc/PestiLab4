@@ -1173,6 +1173,36 @@ async def fuzzy_search(
         "compounds": scored_compounds[:limit]
     }
 
+@api_router.get("/search/fuzzy")
+async def fuzzy_search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(default=20, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fuzzy search with Turkish locale support and intelligent scoring.
+    Returns compounds sorted by relevance score.
+    """
+    # Get all compounds
+    all_compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
+    
+    # Calculate scores for each compound
+    scored_compounds = []
+    for compound in all_compounds:
+        score = calculate_search_score(q, compound['name'], compound['cas_number'])
+        if score > 0:  # Only include compounds with some match
+            compound['search_score'] = score
+            scored_compounds.append(compound)
+    
+    # Sort by score (descending) and limit results
+    scored_compounds.sort(key=lambda x: x['search_score'], reverse=True)
+    
+    return {
+        "query": q,
+        "total_matches": len(scored_compounds),
+        "compounds": scored_compounds[:limit]
+    }
+
 # Include the router in the main app
 app.include_router(api_router)
 
