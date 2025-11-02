@@ -1042,7 +1042,7 @@ async def create_weighing(
         "action": "create_weighing",
         "compound_id": weighing_data.compound_id,
         "usage_id": usage.id,
-        "label_code": label_code,
+        "label_code": final_label_code,
         "timestamp": datetime.now(ISTANBUL_TZ).isoformat()
     })
     
