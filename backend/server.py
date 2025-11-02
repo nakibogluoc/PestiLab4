@@ -962,11 +962,18 @@ async def create_weighing(
         {"$set": {"last_serial": new_serial}}
     )
     
-    # Generate label code
-    prefix = normalize_compound_name(compound['name'])
-    label_code = f"{prefix}-{new_serial:04d}"
+    # Determine label code
+    if weighing_data.label_code and weighing_data.label_code_source == "manual":
+        # User provided manual override
+        final_label_code = weighing_data.label_code
+        label_code_source = "manual"
+    else:
+        # Generate automatic label code
+        prefix = normalize_compound_name(compound['name'])
+        final_label_code = f"{prefix}-{new_serial:04d}"
+        label_code_source = "auto"
     
-    # Create usage record
+    # Create usage record with new fields
     usage = Usage(
         compound_id=weighing_data.compound_id,
         compound_name=compound['name'],
@@ -985,27 +992,43 @@ async def create_weighing(
         solvent_density=solvent_density,
         remaining_stock=new_stock,
         remaining_stock_unit=compound['stock_unit'],
-        prepared_by=current_user.username
+        prepared_by=weighing_data.prepared_by,
+        mix_code=weighing_data.mix_code,
+        mix_code_show=weighing_data.mix_code_show,
+        label_code_used=final_label_code,
+        label_code_source=label_code_source
     )
     
     await db.usages.insert_one(usage.model_dump())
     
-    # Generate QR and barcode
+    # Generate QR and barcode with mix code if enabled
     date_str = datetime.now(ISTANBUL_TZ).strftime("%Y-%m-%d")
-    qr_data = f"LBL|code={label_code}|name={compound['name']}|cas={compound['cas_number']}|c={actual_concentration_ppm} ppm|dt={date_str}|by={current_user.username}"
+    qr_parts = [
+        f"LBL|code={final_label_code}",
+        f"name={compound['name']}",
+        f"cas={compound['cas_number']}",
+        f"c={actual_concentration_ppm} ppm",
+        f"dt={date_str}",
+        f"by={weighing_data.prepared_by}"
+    ]
+    
+    if weighing_data.mix_code and weighing_data.mix_code_show:
+        qr_parts.insert(1, f"mix={weighing_data.mix_code}")
+    
+    qr_data = "|".join(qr_parts)
     
     qr_base64 = generate_qr_code(qr_data)
-    barcode_base64 = generate_barcode(label_code)
+    barcode_base64 = generate_barcode(final_label_code)
     
     # Create label record
     label = Label(
         compound_id=weighing_data.compound_id,
         usage_id=usage.id,
-        label_code=label_code,
+        label_code=final_label_code,
         compound_name=compound['name'],
         cas_number=compound['cas_number'],
         concentration=f"{actual_concentration_ppm} ppm",
-        prepared_by=current_user.username,
+        prepared_by=weighing_data.prepared_by,
         date=date_str,
         qr_data=qr_data
     )
