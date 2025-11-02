@@ -109,13 +109,13 @@ frontend:
     implemented: true
     working: false
     file: "/app/frontend/src/utils/exporters.js"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: false
           agent: "testing"
-          comment: "PDF export shows success toast but has console error: 'doc.autoTable is not a function'. Fixed import statement from 'import jspdf-autotable' to 'import autoTable from jspdf-autotable'. Needs retesting after fix."
+          comment: "PDF export shows success toast but has console error: 'doc.autoTable is not a function'. The jsPDF autoTable plugin is not properly initialized. Button works, toast appears, but actual PDF generation fails. This is a library integration issue that needs main agent attention."
 
   - task: "Client-side Labels Export - Word"
     implemented: true
