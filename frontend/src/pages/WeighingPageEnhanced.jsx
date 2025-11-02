@@ -451,7 +451,7 @@ export default function WeighingPageEnhanced({ user }) {
                       {result.label.compound_name}
                     </p>
                     <p className=\"text-xs\" style={{ fontSize: '6pt' }}>
-                      CAS: {result.label.cas_number} \u2022 Conc.: {result.label.concentration}
+                      CAS: {result.label.cas_number} • Conc.: {result.label.concentration}
                     </p>
                     <p className=\"text-xs\" style={{ fontSize: '6pt' }}>
                       Date: {result.label.date} \u2022 Prepared by: {result.label.prepared_by}
