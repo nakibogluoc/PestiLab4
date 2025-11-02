@@ -1,15 +1,13 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API } from '@/App';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Download, FileText, Tag, FileSpreadsheet, FileImage } from 'lucide-react';
+import { Search, FileText, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { toFixedSafe, pctSafe } from '@/utils/number';
-import { exportLabelsToPDF, exportLabelsToWord, exportLabelsToZIP } from '@/utils/exporters';
 
 export default function RecordsPage() {
   const [usages, setUsages] = useState([]);
