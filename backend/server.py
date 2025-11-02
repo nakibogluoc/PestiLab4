@@ -1539,7 +1539,24 @@ async def export_labels_docx(
         labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
         
         if not labels:
-            raise HTTPException(status_code=404, detail="No labels found")
+            # Return empty DOCX with message instead of error
+            doc = DocxDocument()
+            title = doc.add_heading('PestiLab – Weighing Labels', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            doc.add_paragraph("No labels found matching the criteria.")
+            
+            docx_buffer = BytesIO()
+            doc.save(docx_buffer)
+            docx_buffer.seek(0)
+            
+            timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+            filename = f"Labels_{timestamp}.docx"
+            
+            return StreamingResponse(
+                docx_buffer,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
         
         # Create Word document
         doc = DocxDocument()
