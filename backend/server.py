@@ -145,15 +145,18 @@ class Usage(BaseModel):
     compound_id: str
     compound_name: str
     cas_number: str
-    weighed_amount: float
-    weighed_unit: str
-    prepared_volume: float
-    volume_unit: str
-    concentration: float
-    concentration_unit: str
+    weighed_amount: float  # mg
+    purity: float  # %
+    actual_mass: float  # mg (corrected for purity)
+    target_concentration: float  # mg/L or mg/kg
+    concentration_mode: str  # "mg/L" or "mg/kg"
+    required_volume: float  # mL
+    required_solvent_mass: float  # g
+    actual_concentration: float  # ppm
+    deviation: float  # %
     solvent: str
     temperature_c: float
-    solvent_density: float
+    solvent_density: float  # g/mL
     remaining_stock: float
     remaining_stock_unit: str
     prepared_by: str
