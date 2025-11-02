@@ -360,16 +360,8 @@ export default function RecordsPage() {
 
             {/* Records Table */}
             <Card className="shadow-soft">
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader>
                 <CardTitle>Weighing Records ({filteredUsages.length})</CardTitle>
-                <Button
-                  onClick={handleExportUsages}
-                  className="bg-green-600 hover:bg-green-700"
-                  data-testid="export-usages-button"
-                >
-                  <FileSpreadsheet className="w-4 h-4 mr-2" />
-                  Export Excel
-                </Button>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
