@@ -866,6 +866,71 @@ async def import_compounds(
 
 # === WEIGHING & CALCULATION WITH TEMPERATURE ===
 
+@api_router.post("/weighing/validate")
+async def validate_weighing_input(
+    weighing_data: WeighingInput,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Validate weighing input without saving.
+    Returns validation errors or success with calculated preview.
+    """
+    errors = {}
+    
+    # Validate required fields
+    if not weighing_data.compound_id:
+        errors['compound_id'] = 'Compound ID is required'
+    
+    if weighing_data.weighed_amount <= 0:
+        errors['weighed_amount'] = 'Weighed amount must be positive'
+    
+    if weighing_data.purity <= 0 or weighing_data.purity > 100:
+        errors['purity'] = 'Purity must be between 0 and 100'
+    
+    if weighing_data.target_concentration <= 0:
+        errors['target_concentration'] = 'Target concentration must be positive'
+    
+    if not weighing_data.prepared_by:
+        errors['prepared_by'] = 'Prepared by field is required'
+    
+    if weighing_data.concentration_mode not in ["mg/L", "mg/kg"]:
+        errors['concentration_mode'] = 'Invalid concentration mode'
+    
+    if errors:
+        raise HTTPException(status_code=422, detail={"error": "validation_failed", "fields": errors})
+    
+    # Get compound
+    compound = await db.compounds.find_one({"id": weighing_data.compound_id}, {"_id": 0})
+    if not compound:
+        raise HTTPException(status_code=404, detail="Compound not found")
+    
+    # Calculate preview
+    weighed_mg = weighing_data.weighed_amount
+    actual_mass_mg = weighed_mg * (weighing_data.purity / 100.0)
+    solvent_density = calculate_solvent_density(
+        weighing_data.solvent or compound['solvent'],
+        weighing_data.temperature_c
+    )
+    
+    if weighing_data.concentration_mode == "mg/L":
+        required_volume_mL = actual_mass_mg / (weighing_data.target_concentration / 1000.0)
+    else:
+        actual_mass_g = actual_mass_mg / 1000.0
+        c_target_fraction = weighing_data.target_concentration / 1_000_000.0
+        total_mass_g = actual_mass_g / c_target_fraction
+        required_solvent_mass_g = total_mass_g - actual_mass_g
+        required_volume_mL = required_solvent_mass_g / solvent_density
+    
+    return {
+        "valid": True,
+        "preview": {
+            "compound_name": compound['name'],
+            "actual_mass_mg": round(actual_mass_mg, 3),
+            "required_volume_mL": round(required_volume_mL, 3),
+            "solvent_density": round(solvent_density, 4)
+        }
+    }
+
 @api_router.get("/calculate-density/{solvent_name}/{temperature}")
 async def calculate_density_endpoint(
     solvent_name: str,
