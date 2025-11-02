@@ -258,6 +258,7 @@ export default function RecordsPage() {
                         <th>Concentration</th>
                         <th>Prepared By</th>
                         <th>QR Data</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -273,11 +274,14 @@ export default function RecordsPage() {
                             <td className="text-xs font-mono max-w-xs truncate" title={label.qr_data}>
                               {label.qr_data}
                             </td>
+                            <td className="px-2 py-1">
+                              <ReprintMenu record={label} />
+                            </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="7" className="text-center text-gray-500 py-8">
+                          <td colSpan="8" className="text-center text-gray-500 py-8">
                             No labels found
                           </td>
                         </tr>
