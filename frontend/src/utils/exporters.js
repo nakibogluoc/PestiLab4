@@ -24,7 +24,7 @@ export function exportLabelsToPDF(rows) {
       const slice = rows.slice(i, i + chunk);
       if (i > 0) doc.addPage();
       doc.text("PestiLab – Labels Export", 40, 40);
-      doc.autoTable({
+      (doc as any).autoTable({
         startY: 60,
         styles: { fontSize: 8, cellPadding: 3, overflow: "linebreak" },
         headStyles: { fillColor: [240, 240, 240] },
