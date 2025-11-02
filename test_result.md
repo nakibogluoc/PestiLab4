@@ -107,51 +107,63 @@ user_problem_statement: "Verify the Records page with restored Weighing Records 
 frontend:
   - task: "Weighing Records Export Excel Button Restoration"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Export Excel button has been restored to Weighing Records tab header. Button should be present and functional for exporting weighing records to Excel format."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Export Excel button is present, visible, and enabled in Weighing Records tab header. Button displays correctly with green styling and spreadsheet icon. Weighing Records tab shows 32 records with proper data display and search/filter functionality."
 
   - task: "Labels Tab Server/Client Export Toolbars Removal"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Server Export and Client Export toolbars should remain removed from Labels tab. No bulk PDF/Word/ZIP buttons should be present in the header."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: No bulk export toolbars found in Labels tab. Confirmed absence of Server Export, Client Export, and all bulk PDF/Word/ZIP buttons. Labels tab header is clean with only the title 'Labels (32)' displayed."
 
   - task: "Labels Tab Per-Row Reprint Functionality"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/frontend/src/components/ReprintMenu.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Added per-row Reprint button in Actions column for each label. Dropdown menu should provide PDF/Word/ZIP reprint options for individual labels."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Per-row Reprint functionality working perfectly. Each label row has a 'Reprint' button in the Actions column. Clicking the button opens a dropdown with 3 options: 'Reprint as PDF', 'Reprint as Word', and 'Reprint as ZIP'. Successfully tested PDF export functionality. ReprintMenu component is properly integrated."
 
   - task: "Records Page Data Display and Navigation"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/frontend/src/pages/RecordsPage.jsx"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Records page should display 31 weighing records and 31 labels correctly with proper tab navigation and search/filter functionality."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Records page displays 32 weighing records and 32 labels correctly. Tab navigation works smoothly between Weighing Records and Labels tabs. Table structure is proper with 8 columns including the new Actions column. Search and filter functionality preserved. No console errors detected."
 
 metadata:
   created_by: "testing_agent"
