@@ -766,6 +766,20 @@ async def import_compounds(
 
 # === WEIGHING & CALCULATION WITH TEMPERATURE ===
 
+@api_router.get("/calculate-density/{solvent_name}/{temperature}")
+async def calculate_density_endpoint(
+    solvent_name: str,
+    temperature: float,
+    current_user: User = Depends(get_current_user)
+):
+    \"\"\"Calculate solvent density at given temperature\"\"\"
+    density = calculate_solvent_density(solvent_name, temperature)
+    return {
+        "solvent_name": solvent_name,
+        "temperature_c": temperature,
+        "density_g_per_ml": density
+    }
+
 @api_router.post("/weighing", response_model=Dict[str, Any])
 async def create_weighing(
     weighing_data: WeighingInput,
