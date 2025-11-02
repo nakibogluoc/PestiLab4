@@ -222,6 +222,86 @@ export default function CompoundsPage({ user }) {
               </DialogContent>
             </Dialog>
 
+            {/* Export Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="export-button">
+                  <Download className="w-4 h-4 mr-2" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => handleExport('xlsx')}>
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Export as XLSX
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('csv')}>
+                  <FileText className="w-4 h-4 mr-2" />
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('json')}>
+                  <FileJson className="w-4 h-4 mr-2" />
+                  Export as JSON
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Clear All Button with Confirmation Dialog */}
+            <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  variant="destructive" 
+                  data-testid="clear-all-button" 
+                  disabled={!canDelete}
+                  onClick={() => setClearConfirmText('')}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Clear All
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-red-600">⚠️ Clear All Compounds</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-700">
+                    This will permanently delete all {compounds.length} compounds from the database.
+                    A backup will be automatically downloaded before deletion.
+                  </p>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+                    <p className="text-sm font-semibold text-yellow-900">
+                      This action cannot be undone!
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Type "CLEAR" to confirm:</Label>
+                    <Input
+                      value={clearConfirmText}
+                      onChange={(e) => setClearConfirmText(e.target.value)}
+                      placeholder="Type CLEAR"
+                      data-testid="clear-confirm-input"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => {
+                      setClearConfirmOpen(false);
+                      setClearConfirmText('');
+                    }}>
+                      Cancel
+                    </Button>
+                    <Button 
+                      variant="destructive" 
+                      onClick={handleClearAll}
+                      disabled={clearConfirmText !== 'CLEAR'}
+                      data-testid="clear-confirm-button"
+                    >
+                      Clear All Compounds
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
               <DialogTrigger asChild>
                 <Button className="bg-green-600 hover:bg-green-700" data-testid="add-compound-button" disabled={!canEdit}>
