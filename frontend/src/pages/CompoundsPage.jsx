@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Upload, Search, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { toFixedSafe } from '@/utils/number';
 
 export default function CompoundsPage({ user }) {
   const [compounds, setCompounds] = useState([]);
