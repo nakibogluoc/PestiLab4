@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Scale, Beaker, QrCode, Check, ChevronsUpDown, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { toFixedSafe, pctSafe, parseNumeric } from '@/utils/number';
 
 export default function WeighingPageEnhanced({ user }) {
   const [compounds, setCompounds] = useState([]);
