@@ -81,6 +81,38 @@ export default function RecordsPage() {
     setFilteredUsages(filtered);
   };
 
+  const handleExportUsages = () => {
+    const params = new URLSearchParams();
+    if (filterCompound !== 'all') params.append('compound_id', filterCompound);
+    if (searchQuery) params.append('search_query', searchQuery);
+    
+    const token = localStorage.getItem('token');
+    const url = `${API}/weighings/export.xlsx?${params.toString()}`;
+    
+    // Create temporary link to download with auth header
+    fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    .then(response => response.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `WeighingRecords_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Weighing records exported successfully');
+    })
+    .catch(error => {
+      console.error('Export error:', error);
+      toast.error('Failed to export weighing records');
+    });
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen"><div className="spinner"></div></div>;
   }
