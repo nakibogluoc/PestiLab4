@@ -1333,6 +1333,328 @@ async def fuzzy_search(
         "compounds": scored_compounds[:limit]
     }
 
+# === EXPORT ENDPOINTS ===
+
+@api_router.get("/weighings/export.xlsx")
+async def export_weighings_excel(
+    compound_id: Optional[str] = None,
+    search_query: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Export weighing records to Excel with automatic sheet splitting.
+    Supports unlimited rows by creating new sheets when Excel limit is reached.
+    """
+    try:
+        # Build query
+        query = {}
+        if compound_id:
+            query['compound_id'] = compound_id
+        if search_query:
+            query['$or'] = [
+                {'compound_name': {'$regex': search_query, '$options': 'i'}},
+                {'cas_number': {'$regex': search_query, '$options': 'i'}},
+                {'prepared_by': {'$regex': search_query, '$options': 'i'}}
+            ]
+        
+        # Fetch all records
+        usages = await db.usages.find(query, {'_id': 0}).sort('created_at', -1).to_list(None)
+        
+        # Create workbook
+        wb = Workbook()
+        wb.remove(wb.active)  # Remove default sheet
+        
+        EXCEL_MAX_ROWS = 1_048_576
+        HEADERS = ['Date', 'Compound', 'CAS Number', 'Weighed (mg)', 'Purity (%)', 
+                   'Target (ppm)', 'Req. Volume (mL)', 'Actual (ppm)', 'Deviation (%)',
+                   'Temperature (°C)', 'Density (g/mL)', 'Prepared By', 'Mix Code', 'Label Code']
+        
+        sheet_index = 1
+        row_count = 0
+        ws = None
+        
+        for idx, usage in enumerate(usages):
+            # Create new sheet if needed
+            if row_count == 0 or row_count >= EXCEL_MAX_ROWS - 1:
+                if ws:
+                    pass  # Previous sheet is done
+                ws = wb.create_sheet(f"Weighing Records {sheet_index}")
+                sheet_index += 1
+                row_count = 0
+                
+                # Add headers
+                ws.append(HEADERS)
+                for cell in ws[1]:
+                    cell.font = Font(bold=True)
+                    cell.alignment = Alignment(horizontal='center')
+                row_count += 1
+            
+            # Add data row
+            ws.append([
+                usage.get('created_at', '')[:10] if usage.get('created_at') else '',
+                usage.get('compound_name', ''),
+                usage.get('cas_number', ''),
+                usage.get('weighed_amount', 0),
+                usage.get('purity', 0),
+                usage.get('target_concentration', 0),
+                usage.get('required_volume', 0),
+                usage.get('actual_concentration', 0),
+                usage.get('deviation', 0),
+                usage.get('temperature_c', 0),
+                usage.get('solvent_density', 0),
+                usage.get('prepared_by', ''),
+                usage.get('mix_code', ''),
+                usage.get('label_code_used', '')
+            ])
+            row_count += 1
+        
+        # Save to bytes
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+        
+        timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+        filename = f"WeighingRecords_{timestamp}.xlsx"
+        
+        return StreamingResponse(
+            excel_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"Excel export error: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": "export_xlsx_failed", "detail": str(e)})
+
+@api_router.get("/labels/export.pdf")
+async def export_labels_pdf(
+    compound_id: Optional[str] = None,
+    search_query: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Export labels as merged PDF.
+    All labels are combined into a single PDF file.
+    """
+    try:
+        # Build query
+        query = {}
+        if compound_id:
+            query['compound_id'] = compound_id
+        if search_query:
+            query['$or'] = [
+                {'compound_name': {'$regex': search_query, '$options': 'i'}},
+                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            ]
+        
+        # Fetch labels
+        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+        
+        if not labels:
+            raise HTTPException(status_code=404, detail="No labels found")
+        
+        # Create merged PDF using reportlab
+        pdf_buffer = BytesIO()
+        c = canvas.Canvas(pdf_buffer, pagesize=(70*mm, 25*mm))
+        
+        for label in labels:
+            # Get QR and barcode
+            qr_base64 = generate_qr_code(label['qr_data'])
+            barcode_base64 = generate_barcode(label['label_code'])
+            
+            # Convert base64 to image
+            qr_img = ImageReader(BytesIO(base64.b64decode(qr_base64)))
+            barcode_img = ImageReader(BytesIO(base64.b64decode(barcode_base64)))
+            
+            # Draw label on page
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(5, 20*mm, label['compound_name'][:30])
+            
+            c.setFont("Helvetica", 6)
+            c.drawString(5, 17*mm, f"CAS: {label['cas_number']} • Conc.: {label['concentration']}")
+            c.drawString(5, 14*mm, f"Date: {label['date']} • By: {label['prepared_by']}")
+            
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(5, 3*mm, f"Code: {label['label_code']}")
+            
+            # Draw QR and barcode
+            c.drawImage(qr_img, 50*mm, 3*mm, width=12*mm, height=12*mm)
+            c.drawImage(barcode_img, 50*mm, 16*mm, width=18*mm, height=8*mm)
+            
+            c.showPage()
+        
+        c.save()
+        pdf_buffer.seek(0)
+        
+        timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+        filename = f"Labels_{timestamp}.pdf"
+        
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"PDF export error: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": "export_labels_pdf_failed", "detail": str(e)})
+
+@api_router.get("/labels/export.docx")
+async def export_labels_docx(
+    compound_id: Optional[str] = None,
+    search_query: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Export labels as single Word document.
+    Each label appears on a new page.
+    """
+    try:
+        # Build query
+        query = {}
+        if compound_id:
+            query['compound_id'] = compound_id
+        if search_query:
+            query['$or'] = [
+                {'compound_name': {'$regex': search_query, '$options': 'i'}},
+                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            ]
+        
+        # Fetch labels with usage data
+        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+        
+        if not labels:
+            raise HTTPException(status_code=404, detail="No labels found")
+        
+        # Create Word document
+        doc = DocxDocument()
+        
+        for idx, label in enumerate(labels):
+            # Get usage data
+            usage = await db.usages.find_one({'id': label['usage_id']}, {'_id': 0})
+            
+            # Title
+            title = doc.add_heading('PestiLab – Weighing Label', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Add label data
+            doc.add_paragraph(f"Compound: {label['compound_name']}")
+            doc.add_paragraph(f"CAS Number: {label['cas_number']}")
+            doc.add_paragraph(f"Concentration: {label['concentration']}")
+            doc.add_paragraph(f"Label Code: {label['label_code']}")
+            
+            if usage:
+                doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
+                doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
+                doc.add_paragraph(f"Required Volume: {usage.get('required_volume', 0):.3f} mL")
+                doc.add_paragraph(f"Temperature: {usage.get('temperature_c', 0):.1f}°C")
+                doc.add_paragraph(f"Solvent Density: {usage.get('solvent_density', 0):.4f} g/mL")
+                if usage.get('mix_code'):
+                    doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
+            
+            doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
+            doc.add_paragraph(f"Date: {label['date']}")
+            
+            # Add page break except for last label
+            if idx < len(labels) - 1:
+                doc.add_page_break()
+        
+        # Save to bytes
+        docx_buffer = BytesIO()
+        doc.save(docx_buffer)
+        docx_buffer.seek(0)
+        
+        timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+        filename = f"Labels_{timestamp}.docx"
+        
+        return StreamingResponse(
+            docx_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"DOCX export error: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": "export_labels_docx_failed", "detail": str(e)})
+
+@api_router.get("/labels/export-docx.zip")
+async def export_labels_docx_zip(
+    compound_id: Optional[str] = None,
+    search_query: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Export labels as individual DOCX files in a ZIP archive.
+    Each label is saved as a separate Word document.
+    """
+    try:
+        # Build query
+        query = {}
+        if compound_id:
+            query['compound_id'] = compound_id
+        if search_query:
+            query['$or'] = [
+                {'compound_name': {'$regex': search_query, '$options': 'i'}},
+                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            ]
+        
+        # Fetch labels
+        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+        
+        if not labels:
+            raise HTTPException(status_code=404, detail="No labels found")
+        
+        # Create ZIP file
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for label in labels:
+                # Get usage data
+                usage = await db.usages.find_one({'id': label['usage_id']}, {'_id': 0})
+                
+                # Create document for this label
+                doc = DocxDocument()
+                
+                title = doc.add_heading('PestiLab – Weighing Label', 0)
+                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                doc.add_paragraph(f"Compound: {label['compound_name']}")
+                doc.add_paragraph(f"CAS Number: {label['cas_number']}")
+                doc.add_paragraph(f"Concentration: {label['concentration']}")
+                doc.add_paragraph(f"Label Code: {label['label_code']}")
+                
+                if usage:
+                    doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
+                    doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
+                    if usage.get('mix_code'):
+                        doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
+                
+                doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
+                doc.add_paragraph(f"Date: {label['date']}")
+                
+                # Save to buffer
+                doc_buffer = BytesIO()
+                doc.save(doc_buffer)
+                doc_buffer.seek(0)
+                
+                # Add to ZIP
+                filename = f"Label_{label['label_code'].replace('/', '_')}.docx"
+                zip_file.writestr(filename, doc_buffer.getvalue())
+        
+        zip_buffer.seek(0)
+        
+        timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
+        filename = f"Labels_{timestamp}.zip"
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"DOCX ZIP export error: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": "export_labels_docx_zip_failed", "detail": str(e)})
+
 # Include the router in the main app
 app.include_router(api_router)
 
