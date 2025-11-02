@@ -290,6 +290,38 @@ def calculate_search_score(query: str, compound_name: str, cas_number: str) -> i
     
     return score
 
+def normalize_compound_name(name: str) -> str:
+    """
+    Calculate search score for compound matching.
+    Higher score means better match.
+    """
+    score = 0
+    query_norm = normalize_for_search(query)
+    name_norm = normalize_for_search(compound_name)
+    cas_norm = normalize_for_search(cas_number)
+    
+    # Exact matches get highest score
+    if query_norm == name_norm or query_norm == cas_norm:
+        score += 100
+    
+    # Substring matches
+    if query_norm in name_norm:
+        score += 50
+    if query_norm in cas_norm:
+        score += 50
+    
+    # Prefix matches
+    if name_norm.startswith(query_norm):
+        score += 30
+    if cas_norm.startswith(query_norm):
+        score += 30
+    
+    # Length bonus for shorter matches (more specific)
+    if len(query_norm) > 2:
+        score += min(len(query_norm), 10)
+    
+    return score
+
 def calculate_solvent_density(solvent_name: str, temperature_c: float) -> float:
     """
     Calculate solvent density at given temperature using thermal expansion.
