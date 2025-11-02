@@ -57,13 +57,13 @@ export default function RecordsPage() {
   };
 
   const applyFilters = () => {
-    let filtered = [...usages];
+    let filtered = Array.isArray(usages) ? [...usages] : [];
 
     if (searchQuery) {
       filtered = filtered.filter(u => 
-        u.compound_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.cas_number.includes(searchQuery) ||
-        u.prepared_by.toLowerCase().includes(searchQuery.toLowerCase())
+        (u.compound_name && u.compound_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (u.cas_number && u.cas_number.includes(searchQuery)) ||
+        (u.prepared_by && u.prepared_by.toLowerCase().includes(searchQuery.toLowerCase()))
       );
     }
 
