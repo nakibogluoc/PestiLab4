@@ -214,21 +214,21 @@ Test weighing calculation without saving to database.
 
 ```bash
 # 1. Login
-TOKEN=$(curl -s -X POST "https://pestilab.preview.emergentagent.com/api/auth/login" \
+TOKEN=$(curl -s -X POST "https://labelpro-app.preview.emergentagent.com/api/auth/login" \
   -H "Content-Type: application/json" \
   -d '{"username":"pestical","password":"aceta135410207"}' \
   | jq -r '.access_token')
 
 # 2. Search for compound
-curl -s "https://pestilab.preview.emergentagent.com/api/search/fuzzy?q=imid&limit=5" \
+curl -s "https://labelpro-app.preview.emergentagent.com/api/search/fuzzy?q=imid&limit=5" \
   -H "Authorization: Bearer $TOKEN" | jq
 
 # 3. Get compound ID
-COMPOUND_ID=$(curl -s "https://pestilab.preview.emergentagent.com/api/compounds" \
+COMPOUND_ID=$(curl -s "https://labelpro-app.preview.emergentagent.com/api/compounds" \
   -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
 
 # 4. Validate weighing (dry run)
-curl -s -X POST "https://pestilab.preview.emergentagent.com/api/weighing/validate" \
+curl -s -X POST "https://labelpro-app.preview.emergentagent.com/api/weighing/validate" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{
@@ -246,7 +246,7 @@ curl -s -X POST "https://pestilab.preview.emergentagent.com/api/weighing/validat
   }" | jq
 
 # 5. Save weighing and generate label
-curl -s -X POST "https://pestilab.preview.emergentagent.com/api/weighing" \
+curl -s -X POST "https://labelpro-app.preview.emergentagent.com/api/weighing" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{

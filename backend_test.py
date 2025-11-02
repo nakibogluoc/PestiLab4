@@ -7,7 +7,7 @@ from datetime import datetime
 import os
 
 class PestiLabAPITester:
-    def __init__(self, base_url="https://pestilab.preview.emergentagent.com"):
+    def __init__(self, base_url="https://labelpro-app.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.tests_run = 0
