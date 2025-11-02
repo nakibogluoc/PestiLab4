@@ -81,7 +81,7 @@ function App() {
           }>
             <Route index element={<DashboardPage user={user} />} />
             <Route path="compounds" element={<CompoundsPage user={user} />} />
-            <Route path="weighing" element={<WeighingPage user={user} />} />
+            <Route path="weighing" element={<WeighingPageEnhanced user={user} />} />
             <Route path="records" element={<RecordsPage user={user} />} />
           </Route>
         </Routes>
