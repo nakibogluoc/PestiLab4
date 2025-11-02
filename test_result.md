@@ -160,13 +160,15 @@ metadata:
   run_ui: true
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Weighing Records Export Excel Button Restoration"
+    - "Labels Tab Server/Client Export Toolbars Removal"
+    - "Labels Tab Per-Row Reprint Functionality"
+    - "Records Page Data Display and Navigation"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
-    - agent: "testing"
-      message: "Completed comprehensive verification of export toolbar removal from Records page. Successfully confirmed that all export functionality has been removed as requested."
-    - agent: "testing"
-      message: "VERIFICATION RESULTS: ✅ Weighing Records tab - No Export Excel button, ✅ Labels tab - No Server/Client Export toolbars, ✅ No PDF/Word/ZIP buttons, ✅ Clean UI layout, ✅ All core functionality preserved (search, filter, data display), ✅ No console errors. Export toolbar removal task completed successfully."
+    - agent: "main"
+      message: "Updated Records page with restored Export Excel button for Weighing Records and added per-row Reprint functionality for Labels. Ready for comprehensive testing of new functionality."
