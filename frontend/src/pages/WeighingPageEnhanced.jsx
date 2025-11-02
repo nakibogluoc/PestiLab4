@@ -163,7 +163,12 @@ export default function WeighingPageEnhanced({ user }) {
         target_concentration: parseNumeric(targetConcentration),
         concentration_mode: concentrationMode,
         temperature_c: parseNumeric(temperature),
-        solvent: solvent
+        solvent: solvent,
+        prepared_by: preparedBy,
+        mix_code: mixCode || null,
+        mix_code_show: showMixCode,
+        label_code: labelCode || null,
+        label_code_source: labelCodeSource
       });
 
       setResult(response.data);
