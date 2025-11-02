@@ -176,12 +176,15 @@ export default function RecordsPage() {
                         <th>Date</th>
                         <th>Compound</th>
                         <th>CAS Number</th>
-                        <th>Weighed</th>
-                        <th>Volume</th>
-                        <th>Concentration</th>
-                        <th>Solvent</th>
+                        <th>Weighed (mg)</th>
+                        <th>Purity (%)</th>
+                        <th>Target (ppm)</th>
+                        <th>Req. Volume (mL)</th>
+                        <th>Actual (ppm)</th>
+                        <th>Deviation (%)</th>
+                        <th>Temperature (°C)</th>
+                        <th>Density (g/mL)</th>
                         <th>Prepared By</th>
-                        <th>Remaining Stock</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -193,19 +196,24 @@ export default function RecordsPage() {
                             </td>
                             <td className="font-medium">{usage.compound_name}</td>
                             <td className="font-mono text-sm">{usage.cas_number}</td>
-                            <td>{usage.weighed_amount.toFixed(2)} {usage.weighed_unit}</td>
-                            <td>{usage.prepared_volume.toFixed(2)} {usage.volume_unit}</td>
+                            <td>{usage.weighed_amount?.toFixed(2) || '-'}</td>
+                            <td>{usage.purity?.toFixed(1) || '-'}%</td>
+                            <td>{usage.target_concentration?.toFixed(2) || '-'}</td>
+                            <td>{usage.required_volume?.toFixed(3) || '-'}</td>
                             <td className="font-semibold text-green-600">
-                              {usage.concentration.toFixed(3)} {usage.concentration_unit}
+                              {usage.actual_concentration?.toFixed(3) || '-'}
                             </td>
-                            <td className="text-sm">{usage.solvent}</td>
+                            <td className={Math.abs(usage.deviation || 0) > 1 ? 'text-red-600' : 'text-green-600'}>
+                              {usage.deviation?.toFixed(2) || '-'}%
+                            </td>
+                            <td>{usage.temperature_c?.toFixed(1) || '-'}</td>
+                            <td>{usage.solvent_density?.toFixed(4) || '-'}</td>
                             <td>{usage.prepared_by}</td>
-                            <td>{usage.remaining_stock.toFixed(2)} {usage.remaining_stock_unit}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="9" className="text-center text-gray-500 py-8">
+                          <td colSpan="12" className="text-center text-gray-500 py-8">
                             No records found
                           </td>
                         </tr>
