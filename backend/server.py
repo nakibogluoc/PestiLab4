@@ -1152,6 +1152,138 @@ async def create_weighing(
         "barcode": barcode_base64
     }
 
+
+# === COMPOUND EXPORT / IMPORT / CLEAR ===
+
+@api_router.get("/compounds/export")
+async def export_compounds(
+    format: str = Query("xlsx", regex="^(xlsx|csv|json)$"),
+    q: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Export all compounds (or filtered) as XLSX, CSV, or JSON"""
+    # Fetch compounds
+    query = {}
+    if q:
+        query = {
+            "$or": [
+                {"name": {"$regex": q, "$options": "i"}},
+                {"cas_number": {"$regex": q, "$options": "i"}}
+            ]
+        }
+    
+    compounds = await db.compounds.find(query, {"_id": 0}).to_list(10000)
+    
+    if format == "json":
+        return compounds
+    
+    elif format == "csv":
+        # CSV format
+        import csv
+        output = io.StringIO()
+        if compounds:
+            fieldnames = ["name", "cas_number", "solvent", "stock_value", "stock_unit", "critical_value", "critical_unit", "aliases"]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            for c in compounds:
+                writer.writerow({
+                    "name": c.get("name", ""),
+                    "cas_number": c.get("cas_number", ""),
+                    "solvent": c.get("solvent", ""),
+                    "stock_value": c.get("stock_value", 0),
+                    "stock_unit": c.get("stock_unit", "mg"),
+                    "critical_value": c.get("critical_value", 0),
+                    "critical_unit": c.get("critical_unit", "mg"),
+                    "aliases": ", ".join(c.get("aliases", []))
+                })
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=compounds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    
+    else:  # xlsx
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Compounds"
+        
+        # Header
+        headers = ["Name", "CAS Number", "Solvent", "Stock Value", "Stock Unit", "Critical Level", "Critical Unit", "Aliases"]
+        ws.append(headers)
+        
+        # Style header
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+        
+        # Data
+        for c in compounds:
+            ws.append([
+                c.get("name", ""),
+                c.get("cas_number", ""),
+                c.get("solvent", ""),
+                c.get("stock_value", 0),
+                c.get("stock_unit", "mg"),
+                c.get("critical_value", 0),
+                c.get("critical_unit", "mg"),
+                ", ".join(c.get("aliases", []))
+            ])
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save to BytesIO
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=compounds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+        )
+
+@api_router.post("/compounds/clear")
+async def clear_all_compounds(current_user: User = Depends(get_current_user)):
+    """Clear all compounds (admin only) - returns backup data"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can clear all compounds")
+    
+    # Get all compounds for backup
+    compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
+    
+    # Delete all compounds
+    result = await db.compounds.delete_many({})
+    
+    # Audit log
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "user": current_user.username,
+        "action": "clear_all_compounds",
+        "compounds_count": result.deleted_count,
+        "timestamp": datetime.now(ISTANBUL_TZ).isoformat()
+    })
+    
+    return {
+        "message": f"Successfully deleted {result.deleted_count} compounds",
+        "backup_data": compounds,
+        "deleted_count": result.deleted_count
+    }
+
 # === USAGE & LABEL ROUTES ===
 
 @api_router.get("/usages", response_model=List[Usage])
