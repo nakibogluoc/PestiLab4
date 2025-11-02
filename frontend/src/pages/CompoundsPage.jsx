@@ -120,6 +120,47 @@ export default function CompoundsPage({ user }) {
     }
   };
 
+  const handleExport = (format) => {
+    const query = searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : '';
+    window.location.href = `${API}/compounds/export?format=${format}${query}`;
+    toast.success(`Exporting compounds as ${format.toUpperCase()}...`);
+  };
+
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearConfirmText, setClearConfirmText] = useState('');
+
+  const handleClearAll = async () => {
+    if (clearConfirmText !== 'CLEAR') {
+      toast.error('Please type "CLEAR" to confirm');
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API}/compounds/clear`);
+      
+      // Download backup before clearing UI
+      const backupData = response.data.backup_data;
+      if (backupData && backupData.length > 0) {
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `compounds_backup_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+
+      toast.success(`${response.data.deleted_count} compounds cleared. Backup downloaded.`);
+      fetchCompounds();
+      setClearConfirmOpen(false);
+      setClearConfirmText('');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to clear compounds');
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
