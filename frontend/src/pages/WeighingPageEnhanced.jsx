@@ -28,6 +28,11 @@ export default function WeighingPageEnhanced({ user }) {
   const [temperature, setTemperature] = useState('25');
   const [solvent, setSolvent] = useState('');
   const [solventDensity, setSolventDensity] = useState('');
+  const [preparedBy, setPreparedBy] = useState('');
+  const [mixCode, setMixCode] = useState('');
+  const [showMixCode, setShowMixCode] = useState(true);
+  const [labelCode, setLabelCode] = useState('');
+  const [labelCodeSource, setLabelCodeSource] = useState('auto');
   
   // Calculated outputs
   const [requiredVolume, setRequiredVolume] = useState('');
