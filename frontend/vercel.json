@@ -1,12 +1,22 @@
 {
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "https://pestilab-api.onrender.com/api/$1"
+      "source": "/api/:match*",
+      "destination": "https://pestilab-api.onrender.com/:match*"
     },
     {
       "source": "/(.*)",
       "destination": "/"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+      ]
     }
   ]
 }
