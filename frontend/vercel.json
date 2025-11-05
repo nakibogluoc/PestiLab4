@@ -1,8 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/api/:match*",
-      "destination": "https://pestilab-api.onrender.com/:match*"
+      "source": "/api/(.*)",
+      "destination": "https://pesti-lab4.vercel.app/api/$1"
     },
     {
       "source": "/(.*)",
