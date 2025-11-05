@@ -52,6 +52,11 @@ ISTANBUL_TZ = pytz.timezone("Europe/Istanbul")
 # FastAPI app + router
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
+# /api altında health (frontend'in beklediği endpoint)
+@api_router.get("/health")
+async def api_health_check():
+    return {"ok": True, "service": "pestilab-api", "path": "/api/health"}
+
 security = HTTPBearer()
 
 # ==== MODELS ====
