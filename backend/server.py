@@ -1,5 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,12 +8,12 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import uuid
 from datetime import datetime, timezone, timedelta
 import jwt
 import bcrypt
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 import io
 import qrcode
 import barcode
@@ -20,62 +21,40 @@ from barcode.writer import ImageWriter
 from reportlab.lib.pagesizes import A4, mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 import pytz
 from io import BytesIO
 import base64
 import re
-from fastapi.responses import StreamingResponse, FileResponse
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
-from PyPDF2 import PdfMerger
+from openpyxl.styles import Font, Alignment, PatternFill
+from PyPDF2 import PdfMerger  # kept for compatibility
 from docx import Document as DocxDocument
-from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import zipfile
-import tempfile
 
+# ==== INIT ====
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# MongoDB
+MONGO_URL = os.getenv("MONGO_URL", "")
+DB_NAME = os.getenv("DB_NAME", "pestilab")
+client: Optional[AsyncIOMotorClient] = AsyncIOMotorClient(MONGO_URL) if MONGO_URL else None
+db = client[DB_NAME] if client else None
 
-# JWT configuration
-SECRET_KEY = os.environ.get('SECRET_KEY', 'laboratory-secret-key-2025')
+# JWT
+SECRET_KEY = os.getenv("SECRET_KEY", "laboratory-secret-key-2025")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
-# Timezone
-ISTANBUL_TZ = pytz.timezone('Europe/Istanbul')
+# TZ
+ISTANBUL_TZ = pytz.timezone("Europe/Istanbul")
 
-# Create the main app without a prefix
+# FastAPI app + router
 app = FastAPI()
-
-# ---- Root & Health (prefixsiz) ----
-@app.get("/")
-def root():
-    return {"ok": True, "service": "pestilab-api"}
-
-@app.get("/health")
-def health_check():
-    return {"ok": True, "service": "pestilab-api", "path": "/health"}
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
-
-# ---- Health (prefixli) ----
-@api_router.get("/health")
-def api_health_check():
-    return {"ok": True, "service": "pestilab-api", "path": "/api/health"}
-
 security = HTTPBearer()
 
-# === MODELS ===
-
+# ==== MODELS ====
 class UserRole(str):
     ADMIN = "admin"
     MANAGER = "manager"
@@ -157,15 +136,15 @@ class WeighingInput(BaseModel):
     compound_id: str
     weighed_amount: float  # mg
     purity: float = 100.0  # %
-    target_concentration: float  # mg/L or mg/kg
+    target_concentration: float  # mg/L or mg/kg (ppm)
     concentration_mode: str = "mg/L"  # "mg/L" or "mg/kg"
     temperature_c: float = 25.0
     solvent: Optional[str] = None
-    prepared_by: str  # Manually editable
-    mix_code: Optional[str] = None  # Optional mix code
-    mix_code_show: bool = True  # Show mix code on label
-    label_code: Optional[str] = None  # Manual override of label code
-    label_code_source: str = "auto"  # "auto", "excel", or "manual"
+    prepared_by: str
+    mix_code: Optional[str] = None
+    mix_code_show: bool = True
+    label_code: Optional[str] = None
+    label_code_source: str = "auto"  # "auto", "excel", "manual"
 
 class Usage(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -173,18 +152,18 @@ class Usage(BaseModel):
     compound_id: str
     compound_name: str
     cas_number: str
-    weighed_amount: float  # mg
-    purity: float  # %
-    actual_mass: float  # mg (corrected for purity)
-    target_concentration: float  # mg/L or mg/kg
-    concentration_mode: str  # "mg/L" or "mg/kg"
-    required_volume: float  # mL
-    required_solvent_mass: float  # g
-    actual_concentration: float  # ppm
-    deviation: float  # %
+    weighed_amount: float
+    purity: float
+    actual_mass: float
+    target_concentration: float
+    concentration_mode: str
+    required_volume: float
+    required_solvent_mass: float
+    actual_concentration: float
+    deviation: float
     solvent: str
     temperature_c: float
-    solvent_density: float  # g/mL
+    solvent_density: float
     remaining_stock: float
     remaining_stock_unit: str
     prepared_by: str
@@ -221,73 +200,58 @@ class ExcelImportResponse(BaseModel):
     compounds_skipped: int
     densities_added: int = 0
 
-# === HELPER FUNCTIONS ===
-
+# ==== HELPERS ====
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
         user = await db.users.find_one({"username": username}, {"_id": 0})
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
         return User(**user)
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 def normalize_string(s: str) -> str:
-    """Normalize strings: trim, uppercase, remove extra spaces"""
     if not s:
         return ""
-    return ' '.join(str(s).strip().upper().split())
+    return " ".join(str(s).strip().upper().split())
 
 def normalize_for_search(text: str) -> str:
-    """
-    Normalize text for fuzzy search with Turkish locale support.
-    Removes spaces, hyphens, parentheses, commas and converts to lowercase.
-    """
     if not text:
         return ""
     char_map = {
-        'İ': 'i', 'I': 'i', 'ı': 'i',
-        'Ğ': 'g', 'ğ': 'g',
-        'Ş': 's', 'ş': 's',
-        'Ç': 'c', 'ç': 'c',
-        'Ö': 'o', 'ö': 'o',
-        'Ü': 'u', 'ü': 'u'
+        'İ': 'i','I': 'i','ı': 'i','Ğ': 'g','ğ': 'g','Ş': 's','ş': 's',
+        'Ç': 'c','ç': 'c','Ö': 'o','ö': 'o','Ü': 'u','ü': 'u'
     }
-    text = text.lower()
-    for turkish_char, latin_char in char_map.items():
-        text = text.replace(turkish_char.lower(), latin_char)
-    text = re.sub(r'[\s\-\(\),]', '', text)
-    return text
+    text = str(text).lower()
+    for k, v in char_map.items():
+        text = text.replace(k.lower(), v)
+    return re.sub(r'[\s\-\(\),]', '', text)
 
 def calculate_search_score(query: str, compound_name: str, cas_number: str) -> int:
-    """
-    Calculate search score for compound matching.
-    Higher score means better match.
-    Optimized for short queries (2-3 characters).
-    """
     score = 0
     query_norm = normalize_for_search(query)
     name_norm = normalize_for_search(compound_name)
     cas_norm = normalize_for_search(cas_number)
+
     query_lower = query.lower()
     name_lower = compound_name.lower()
     cas_lower = cas_number.lower()
+
     if query_norm == name_norm or query_norm == cas_norm:
         score += 100
     if query_lower == name_lower or query_lower == cas_lower:
@@ -296,8 +260,7 @@ def calculate_search_score(query: str, compound_name: str, cas_number: str) -> i
         score += 60
     if cas_norm.startswith(query_norm):
         score += 60
-    words = name_lower.split()
-    for word in words:
+    for word in name_lower.split():
         if word.startswith(query_lower):
             score += 50
     if query_norm in name_norm:
@@ -314,54 +277,21 @@ def calculate_search_score(query: str, compound_name: str, cas_number: str) -> i
         score -= 5
     return score
 
-def calculate_solvent_density(solvent_name: str, temperature_c: float) -> float:
-    """
-    Calculate solvent density at given temperature using thermal expansion.
-    Formula: ρ(T) = ρ20 × (1 - β × (T - 20))
-    """
-    density_20 = {
-        "Acetonitrile": 0.783,
-        "Methanol": 0.791,
-        "Water": 0.998,
-        "Toluene": 0.867,
-        "Isopropanol": 0.785,
-        "Ethyl Acetate": 0.902,
-        "Acetone": 0.791,
-        "Hexane": 0.661,
-        "Cyclohexane": 0.779,
-        "Dichloromethane": 1.326,
-        "Chloroform": 1.489,
-        "DMSO": 1.100,
-        "N,N-Dimethylformamide": 0.948,
-        "Iso Propanol": 0.785,
-        "Heptane": 0.684,
-        "Ethanol": 0.789
-    }
-    beta = 0.001
-    rho_20 = density_20.get(solvent_name, 0.800)
-    rho_T = rho_20 * (1 - beta * (temperature_c - 20))
-    return round(rho_T, 4)
-
 def normalize_compound_name(name: str) -> str:
-    """Normalize compound name to generate code prefix (first 3 Latin letters)"""
-    char_map = {
-        'İ': 'I', 'ı': 'i', 'Ğ': 'G', 'ğ': 'g',
-        'Ş': 'S', 'ş': 's', 'Ç': 'C', 'ç': 'c',
-        'Ö': 'O', 'ö': 'o', 'Ü': 'U', 'ü': 'u'
-    }
+    """Generate 3-letter uppercase Latin prefix for label code."""
+    char_map = {'İ':'I','ı':'i','Ğ':'G','ğ':'g','Ş':'S','ş':'s','Ç':'C','ç':'c','Ö':'O','ö':'o','Ü':'U','ü':'u'}
     normalized = ''
-    for char in name:
-        if char in char_map:
-            normalized += char_map[char]
-        elif char.isalpha():
-            normalized += char
+    for ch in name:
+        if ch in char_map:
+            normalized += char_map[ch]
+        elif ch.isalpha():
+            normalized += ch
     prefix = normalized[:3].upper()
     if len(prefix) < 3:
         prefix = prefix.ljust(3, 'X')
     return prefix
 
-def find_column_by_aliases(headers: Dict, aliases: List[str]) -> Optional[int]:
-    """Find column index by checking multiple alias names (case-insensitive)"""
+def find_column_by_aliases(headers: Dict[str, int], aliases: List[str]) -> Optional[int]:
     for header_name, col_idx in headers.items():
         normalized_header = normalize_string(header_name)
         for alias in aliases:
@@ -369,11 +299,7 @@ def find_column_by_aliases(headers: Dict, aliases: List[str]) -> Optional[int]:
                 return col_idx
     return None
 
-def interpolate_density(temperature: float, density_data: List[Dict]) -> tuple[float, bool]:
-    """
-    Interpolate or extrapolate density for given temperature.
-    Returns (density, is_extrapolated)
-    """
+def interpolate_density(temperature: float, density_data: List[Dict[str, float]]) -> Tuple[float, bool]:
     if not density_data:
         return 0.8, False
     sorted_data = sorted(density_data, key=lambda x: x['temperature_c'])
@@ -396,53 +322,50 @@ def interpolate_density(temperature: float, density_data: List[Dict]) -> tuple[f
     return density, True
 
 def generate_qr_code(data: str) -> str:
-    """Generate QR code and return as base64 string"""
     qr = qrcode.QRCode(version=1, box_size=10, border=1)
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     buffer = BytesIO()
-    img.save(buffer, format='PNG')
+    img.save(buffer, format="PNG")
     buffer.seek(0)
     return base64.b64encode(buffer.getvalue()).decode()
 
 def generate_barcode(code: str) -> str:
-    """Generate Code128 barcode and return as base64 string"""
     buffer = BytesIO()
-    code128 = barcode.get('code128', code, writer=ImageWriter())
-    code128.write(buffer, {'write_text': False, 'module_height': 8, 'module_width': 0.2})
+    code128 = barcode.get("code128", code, writer=ImageWriter())
+    code128.write(buffer, {"write_text": False, "module_height": 8, "module_width": 0.2})
     buffer.seek(0)
     return base64.b64encode(buffer.getvalue()).decode()
 
-# === AUTH ROUTES ===
-
+# ==== AUTH ====
 @api_router.post("/auth/register", response_model=User)
 async def register(user_data: UserCreate, current_user: User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can create users")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     existing_user = await db.users.find_one({"username": user_data.username})
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already exists")
-    hashed_password = bcrypt.hashpw(user_data.password.encode('utf-8'), bcrypt.gensalt())
-    user = User(
-        username=user_data.username,
-        email=user_data.email,
-        role=user_data.role
-    )
+    hashed_password = bcrypt.hashpw(user_data.password.encode("utf-8"), bcrypt.gensalt())
+    user = User(username=user_data.username, email=user_data.email, role=user_data.role)
     doc = user.model_dump()
-    doc['password'] = hashed_password.decode('utf-8')
+    doc["password"] = hashed_password.decode("utf-8")
     await db.users.insert_one(doc)
     return user
 
 @api_router.post("/auth/login", response_model=Token)
 async def login(login_data: UserLogin):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     user = await db.users.find_one({"username": login_data.username})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not bcrypt.checkpw(login_data.password.encode('utf-8'), user['password'].encode('utf-8')):
+    if not bcrypt.checkpw(login_data.password.encode("utf-8"), user["password"].encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = create_access_token(data={"sub": user['username']})
-    user_obj = User(**{k: v for k, v in user.items() if k != 'password'})
+    access_token = create_access_token(data={"sub": user["username"]})
+    user_obj = User(**{k: v for k, v in user.items() if k != "password"})
     return Token(access_token=access_token, token_type="bearer", user=user_obj)
 
 @api_router.get("/auth/me", response_model=User)
@@ -453,34 +376,34 @@ async def get_me(current_user: User = Depends(get_current_user)):
 async def get_users(current_user: User = Depends(get_current_user)):
     if current_user.role not in ["admin", "manager"]:
         raise HTTPException(status_code=403, detail="Not authorized")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     users = await db.users.find({}, {"_id": 0, "password": 0}).to_list(1000)
     return [User(**u) for u in users]
 
-# === SOLVENT DENSITY ROUTES ===
-
+# ==== SOLVENT DENSITY ====
 @api_router.post("/solvent-densities", response_model=SolventDensity)
 async def create_solvent_density(data: SolventDensityCreate, current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot create density data")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     density = SolventDensity(**data.model_dump())
     await db.solvent_densities.insert_one(density.model_dump())
     return density
 
 @api_router.get("/solvent-densities", response_model=List[SolventDensity])
 async def get_solvent_densities(current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     densities = await db.solvent_densities.find({}, {"_id": 0}).to_list(1000)
     return [SolventDensity(**d) for d in densities]
 
 @api_router.get("/solvent-densities/{solvent_name}/at/{temperature}")
-async def get_density_at_temperature(
-    solvent_name: str,
-    temperature: float,
-    current_user: User = Depends(get_current_user)
-):
-    density_data = await db.solvent_densities.find(
-        {"solvent_name": solvent_name},
-        {"_id": 0}
-    ).to_list(100)
+async def get_density_at_temperature(solvent_name: str, temperature: float, current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    density_data = await db.solvent_densities.find({"solvent_name": solvent_name}, {"_id": 0}).to_list(100)
     if not density_data:
         raise HTTPException(status_code=404, detail=f"No density data found for solvent: {solvent_name}")
     density, is_extrapolated = interpolate_density(temperature, density_data)
@@ -492,15 +415,15 @@ async def get_density_at_temperature(
         "warning": "Extrapolated density - outside measured range" if is_extrapolated else None
     }
 
-# === COMPOUND ROUTES ===
-
+# ==== COMPOUNDS ====
 @api_router.post("/compounds", response_model=Compound)
 async def create_compound(compound_data: CompoundCreate, current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot create compounds")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     compound = Compound(**compound_data.model_dump())
-    doc = compound.model_dump()
-    await db.compounds.insert_one(doc)
+    await db.compounds.insert_one(compound.model_dump())
     await db.audit_logs.insert_one({
         "id": str(uuid.uuid4()),
         "user": current_user.username,
@@ -513,11 +436,15 @@ async def create_compound(compound_data: CompoundCreate, current_user: User = De
 
 @api_router.get("/compounds", response_model=List[Compound])
 async def get_compounds(current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
     return [Compound(**c) for c in compounds]
 
 @api_router.get("/compounds/{compound_id}", response_model=Compound)
 async def get_compound(compound_id: str, current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     compound = await db.compounds.find_one({"id": compound_id}, {"_id": 0})
     if not compound:
         raise HTTPException(status_code=404, detail="Compound not found")
@@ -527,11 +454,13 @@ async def get_compound(compound_id: str, current_user: User = Depends(get_curren
 async def update_compound(compound_id: str, update_data: CompoundUpdate, current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot update compounds")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     compound = await db.compounds.find_one({"id": compound_id}, {"_id": 0})
     if not compound:
         raise HTTPException(status_code=404, detail="Compound not found")
     update_dict = {k: v for k, v in update_data.model_dump().items() if v is not None}
-    update_dict['updated_at'] = datetime.now(ISTANBUL_TZ).isoformat()
+    update_dict["updated_at"] = datetime.now(ISTANBUL_TZ).isoformat()
     await db.compounds.update_one({"id": compound_id}, {"$set": update_dict})
     await db.audit_logs.insert_one({
         "id": str(uuid.uuid4()),
@@ -548,6 +477,8 @@ async def update_compound(compound_id: str, update_data: CompoundUpdate, current
 async def delete_compound(compound_id: str, current_user: User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can delete compounds")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
     result = await db.compounds.delete_one({"id": compound_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Compound not found")
@@ -560,29 +491,33 @@ async def delete_compound(compound_id: str, current_user: User = Depends(get_cur
     })
     return {"message": "Compound deleted successfully"}
 
-# === ENHANCED EXCEL IMPORT ===
-
+# ==== EXCEL IMPORT ====
 @api_router.post("/compounds/import/preview", response_model=ExcelImportPreview)
-async def preview_excel_import(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
-):
+async def preview_excel_import(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot import data")
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+
     contents = await file.read()
     workbook = load_workbook(filename=io.BytesIO(contents), read_only=True)
+
     to_insert, to_update, to_skip = [], [], []
+
     sheet = None
     for sheet_name in workbook.sheetnames:
-        if 'compound' in sheet_name.lower() or sheet_name == workbook.sheetnames[0]:
-            sheet = workbook[sheet_name]; break
+        if "compound" in sheet_name.lower() or sheet_name == workbook.sheetnames[0]:
+            sheet = workbook[sheet_name]
+            break
     if not sheet:
         sheet = workbook.active
+
     name_aliases = ["Analit Adı", "Compound", "Compound Name", "Name"]
     cas_aliases = ["CAS", "CAS No", "CAS Number"]
     solvent_aliases = ["Solvent", "Çözücü", "Önerilen Solvent", "Default Solvent"]
+
     header_row, headers = None, {}
     for row_idx, row in enumerate(sheet.iter_rows(min_row=1, max_row=100), start=1):
         row_values = [cell.value for cell in row if cell.value]
@@ -600,39 +535,33 @@ async def preview_excel_import(
             break
     if not header_row:
         raise HTTPException(status_code=400, detail="Could not find header row with required columns")
+
     name_col = find_column_by_aliases(headers, name_aliases)
     cas_col = find_column_by_aliases(headers, cas_aliases)
     solvent_col = find_column_by_aliases(headers, solvent_aliases)
     if not name_col or not cas_col:
         raise HTTPException(status_code=400, detail=f"Required columns not found. Headers found: {list(headers.keys())}")
+
     for row in sheet.iter_rows(min_row=header_row + 1, max_row=header_row + 500):
         name = row[name_col - 1].value if name_col else None
         cas = row[cas_col - 1].value if cas_col else None
         solvent = row[solvent_col - 1].value if solvent_col else "Acetone"
-        if not name or not cas or str(cas).lower() == 'nan' or str(name).startswith('='):
+        if not name or not cas or str(cas).lower() == "nan" or str(name).startswith("="):
             continue
         name = str(name).strip()
         cas = str(cas).strip().upper()
         solvent = str(solvent).strip() if solvent else "Acetone"
-        existing = await db.compounds.find_one({
-            "$or": [
-                {"cas_number": cas},
-                {"cas_number": cas, "name": name}
-            ]
-        })
+        existing = await db.compounds.find_one({"cas_number": cas})
         compound_data = {
-            "name": name,
-            "cas_number": cas,
-            "solvent": solvent,
-            "stock_value": 1000.0,
-            "stock_unit": "mg",
-            "critical_value": 100.0
+            "name": name, "cas_number": cas, "solvent": solvent,
+            "stock_value": 1000.0, "stock_unit": "mg", "critical_value": 100.0
         }
         if existing:
             compound_data["id"] = existing["id"]
             to_update.append(compound_data)
         else:
             to_insert.append(compound_data)
+
     return ExcelImportPreview(
         to_insert=to_insert[:50],
         to_update=to_update[:50],
@@ -641,26 +570,31 @@ async def preview_excel_import(
     )
 
 @api_router.post("/compounds/import", response_model=ExcelImportResponse)
-async def import_compounds(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
-):
+async def import_compounds(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot import data")
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+
     contents = await file.read()
     workbook = load_workbook(filename=io.BytesIO(contents), read_only=True)
+
     added = updated = skipped = densities_added = 0
+
     sheet = None
     for sheet_name in workbook.sheetnames:
-        if 'compound' in sheet_name.lower() or sheet_name == workbook.sheetnames[0]:
-            sheet = workbook[sheet_name]; break
+        if "compound" in sheet_name.lower() or sheet_name == workbook.sheetnames[0]:
+            sheet = workbook[sheet_name]
+            break
     if not sheet:
         sheet = workbook.active
+
     name_aliases = ["Analit Adı", "Compound", "Compound Name", "Name"]
     cas_aliases = ["CAS", "CAS No", "CAS Number"]
     solvent_aliases = ["Solvent", "Çözücü", "Önerilen Solvent", "Default Solvent"]
+
     header_row, headers = None, {}
     for row_idx, row in enumerate(sheet.iter_rows(min_row=1, max_row=100), start=1):
         row_values = [cell.value for cell in row if cell.value]
@@ -678,44 +612,40 @@ async def import_compounds(
             break
     if not header_row:
         raise HTTPException(status_code=400, detail="Could not find header row")
+
     name_col = find_column_by_aliases(headers, name_aliases)
     cas_col = find_column_by_aliases(headers, cas_aliases)
     solvent_col = find_column_by_aliases(headers, solvent_aliases)
     if not name_col or not cas_col:
         raise HTTPException(status_code=400, detail=f"Required columns not found. Found: {list(headers.keys())}")
+
     for row in sheet.iter_rows(min_row=header_row + 1, max_row=header_row + 1000):
         name = row[name_col - 1].value if name_col else None
         cas = row[cas_col - 1].value if cas_col else None
         solvent = row[solvent_col - 1].value if solvent_col else "Acetone"
-        if not name or not cas or str(cas).lower() == 'nan' or str(name).startswith('='):
+        if not name or not cas or str(cas).lower() == "nan" or str(name).startswith("="):
             skipped += 1
             continue
         name = str(name).strip()
         cas = str(cas).strip().upper()
         solvent = str(solvent).strip() if solvent else "Acetone"
+
         existing = await db.compounds.find_one({"cas_number": cas})
         if existing:
             await db.compounds.update_one(
                 {"cas_number": cas},
-                {"$set": {
-                    "name": name,
-                    "solvent": solvent,
-                    "updated_at": datetime.now(ISTANBUL_TZ).isoformat()
-                }}
+                {"$set": {"name": name, "solvent": solvent, "updated_at": datetime.now(ISTANBUL_TZ).isoformat()}}
             )
             updated += 1
         else:
             compound = Compound(
-                name=name,
-                cas_number=cas,
-                solvent=solvent,
-                stock_value=1000.0,
-                stock_unit="mg",
-                critical_value=100.0,
-                critical_unit="mg"
+                name=name, cas_number=cas, solvent=solvent,
+                stock_value=1000.0, stock_unit="mg",
+                critical_value=100.0, critical_unit="mg"
             )
             await db.compounds.insert_one(compound.model_dump())
             added += 1
+
     await db.audit_logs.insert_one({
         "id": str(uuid.uuid4()),
         "user": current_user.username,
@@ -723,6 +653,7 @@ async def import_compounds(
         "details": f"Added: {added}, Updated: {updated}, Skipped: {skipped}",
         "timestamp": datetime.now(ISTANBUL_TZ).isoformat()
     })
+
     return ExcelImportResponse(
         message="Import completed successfully",
         compounds_added=added,
@@ -731,37 +662,52 @@ async def import_compounds(
         densities_added=densities_added
     )
 
-# === WEIGHING & CALCULATION WITH TEMPERATURE ===
+# ==== CALC / WEIGHING ====
+@api_router.get("/calculate-density/{solvent_name}/{temperature}")
+async def calculate_density_endpoint(solvent_name: str, temperature: float, current_user: User = Depends(get_current_user)):
+    density = calculate_solvent_density(solvent_name, temperature)
+    return {"solvent_name": solvent_name, "temperature_c": temperature, "density_g_per_ml": density}
+
+def calculate_solvent_density(solvent_name: str, temperature_c: float) -> float:
+    density_20 = {
+        "Acetonitrile": 0.783, "Methanol": 0.791, "Water": 0.998, "Toluene": 0.867,
+        "Isopropanol": 0.785, "Ethyl Acetate": 0.902, "Acetone": 0.791, "Hexane": 0.661,
+        "Cyclohexane": 0.779, "Dichloromethane": 1.326, "Chloroform": 1.489, "DMSO": 1.100,
+        "N,N-Dimethylformamide": 0.948, "Iso Propanol": 0.785, "Heptane": 0.684, "Ethanol": 0.789
+    }
+    beta = 0.001
+    rho_20 = density_20.get(solvent_name, 0.800)
+    rho_T = rho_20 * (1 - beta * (temperature_c - 20))
+    return round(rho_T, 4)
 
 @api_router.post("/weighing/validate")
-async def validate_weighing_input(
-    weighing_data: WeighingInput,
-    current_user: User = Depends(get_current_user)
-):
+async def validate_weighing_input(weighing_data: WeighingInput, current_user: User = Depends(get_current_user)):
     errors = {}
     if not weighing_data.compound_id:
-        errors['compound_id'] = 'Compound ID is required'
+        errors["compound_id"] = "Compound ID is required"
     if weighing_data.weighed_amount <= 0:
-        errors['weighed_amount'] = 'Weighed amount must be positive'
+        errors["weighed_amount"] = "Weighed amount must be positive"
     if weighing_data.purity <= 0 or weighing_data.purity > 100:
-        errors['purity'] = 'Purity must be between 0 and 100'
+        errors["purity"] = "Purity must be between 0 and 100"
     if weighing_data.target_concentration <= 0:
-        errors['target_concentration'] = 'Target concentration must be positive'
+        errors["target_concentration"] = "Target concentration must be positive"
     if not weighing_data.prepared_by:
-        errors['prepared_by'] = 'Prepared by field is required'
+        errors["prepared_by"] = "Prepared by field is required"
     if weighing_data.concentration_mode not in ["mg/L", "mg/kg"]:
-        errors['concentration_mode'] = 'Invalid concentration mode'
+        errors["concentration_mode"] = "Invalid concentration mode"
     if errors:
         raise HTTPException(status_code=422, detail={"error": "validation_failed", "fields": errors})
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+
     compound = await db.compounds.find_one({"id": weighing_data.compound_id}, {"_id": 0})
     if not compound:
         raise HTTPException(status_code=404, detail="Compound not found")
+
     weighed_mg = weighing_data.weighed_amount
     actual_mass_mg = weighed_mg * (weighing_data.purity / 100.0)
-    solvent_density = calculate_solvent_density(
-        weighing_data.solvent or compound['solvent'],
-        weighing_data.temperature_c
-    )
+    solvent_density = calculate_solvent_density(weighing_data.solvent or compound["solvent"], weighing_data.temperature_c)
+
     if weighing_data.concentration_mode == "mg/L":
         required_volume_mL = actual_mass_mg / (weighing_data.target_concentration / 1000.0)
     else:
@@ -770,47 +716,38 @@ async def validate_weighing_input(
         total_mass_g = actual_mass_g / c_target_fraction
         required_solvent_mass_g = total_mass_g - actual_mass_g
         required_volume_mL = required_solvent_mass_g / solvent_density
+
     return {
         "valid": True,
         "preview": {
-            "compound_name": compound['name'],
+            "compound_name": compound["name"],
             "actual_mass_mg": round(actual_mass_mg, 3),
             "required_volume_mL": round(required_volume_mL, 3),
             "solvent_density": round(solvent_density, 4)
         }
     }
 
-@api_router.get("/calculate-density/{solvent_name}/{temperature}")
-async def calculate_density_endpoint(
-    solvent_name: str,
-    temperature: float,
-    current_user: User = Depends(get_current_user)
-):
-    density = calculate_solvent_density(solvent_name, temperature)
-    return {
-        "solvent_name": solvent_name,
-        "temperature_c": temperature,
-        "density_g_per_ml": density
-    }
-
 @api_router.post("/weighing", response_model=Dict[str, Any])
-async def create_weighing(
-    weighing_data: WeighingInput,
-    current_user: User = Depends(get_current_user)
-):
+async def create_weighing(weighing_data: WeighingInput, current_user: User = Depends(get_current_user)):
     if current_user.role == "readonly":
         raise HTTPException(status_code=403, detail="Read-only users cannot create weighing records")
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+
     compound = await db.compounds.find_one({"id": weighing_data.compound_id}, {"_id": 0})
     if not compound:
         raise HTTPException(status_code=404, detail="Compound not found")
+
     weighed_mg = weighing_data.weighed_amount
     purity_percent = weighing_data.purity
     target_concentration = weighing_data.target_concentration
     concentration_mode = weighing_data.concentration_mode
     temperature = weighing_data.temperature_c
-    solvent_name = weighing_data.solvent or compound['solvent']
+    solvent_name = weighing_data.solvent or compound["solvent"]
+
     actual_mass_mg = weighed_mg * (purity_percent / 100.0)
     solvent_density = calculate_solvent_density(solvent_name, temperature)
+
     if concentration_mode == "mg/L":
         required_volume_mL = actual_mass_mg / (target_concentration / 1000.0)
         required_solvent_mass_g = required_volume_mL * solvent_density
@@ -822,33 +759,33 @@ async def create_weighing(
         required_solvent_mass_g = total_mass_g - actual_mass_g
         required_volume_mL = required_solvent_mass_g / solvent_density
         actual_concentration_ppm = (actual_mass_g / total_mass_g) * 1_000_000.0
+
     deviation_percent = ((actual_concentration_ppm - target_concentration) / target_concentration) * 100.0
+
     required_volume_mL = round(required_volume_mL, 3)
     required_solvent_mass_g = round(required_solvent_mass_g, 3)
     actual_concentration_ppm = round(actual_concentration_ppm, 3)
     deviation_percent = round(deviation_percent, 2)
     solvent_density = round(solvent_density, 4)
-    new_stock = compound['stock_value'] - weighed_mg
-    await db.compounds.update_one(
-        {"id": weighing_data.compound_id},
-        {"$set": {"stock_value": new_stock, "updated_at": datetime.now(ISTANBUL_TZ).isoformat()}}
-    )
-    new_serial = compound['last_serial'] + 1
-    await db.compounds.update_one(
-        {"id": weighing_data.compound_id},
-        {"$set": {"last_serial": new_serial}}
-    )
+
+    new_stock = compound["stock_value"] - weighed_mg
+    await db.compounds.update_one({"id": weighing_data.compound_id}, {"$set": {"stock_value": new_stock, "updated_at": datetime.now(ISTANBUL_TZ).isoformat()}})
+
+    new_serial = compound["last_serial"] + 1
+    await db.compounds.update_one({"id": weighing_data.compound_id}, {"$set": {"last_serial": new_serial}})
+
     if weighing_data.label_code and weighing_data.label_code_source == "manual":
         final_label_code = weighing_data.label_code
         label_code_source = "manual"
     else:
-        prefix = normalize_compound_name(compound['name'])
+        prefix = normalize_compound_name(compound["name"])
         final_label_code = f"{prefix}-{new_serial:04d}"
         label_code_source = "auto"
+
     usage = Usage(
         compound_id=weighing_data.compound_id,
-        compound_name=compound['name'],
-        cas_number=compound['cas_number'],
+        compound_name=compound["name"],
+        cas_number=compound["cas_number"],
         weighed_amount=weighed_mg,
         purity=purity_percent,
         actual_mass=round(actual_mass_mg, 3),
@@ -862,7 +799,7 @@ async def create_weighing(
         temperature_c=temperature,
         solvent_density=solvent_density,
         remaining_stock=new_stock,
-        remaining_stock_unit=compound['stock_unit'],
+        remaining_stock_unit=compound["stock_unit"],
         prepared_by=weighing_data.prepared_by,
         mix_code=weighing_data.mix_code,
         mix_code_show=weighing_data.mix_code_show,
@@ -870,6 +807,7 @@ async def create_weighing(
         label_code_source=label_code_source
     )
     await db.usages.insert_one(usage.model_dump())
+
     date_str = datetime.now(ISTANBUL_TZ).strftime("%Y-%m-%d")
     qr_parts = [
         f"LBL|code={final_label_code}",
@@ -882,20 +820,23 @@ async def create_weighing(
     if weighing_data.mix_code and weighing_data.mix_code_show:
         qr_parts.insert(1, f"mix={weighing_data.mix_code}")
     qr_data = "|".join(qr_parts)
+
     qr_base64 = generate_qr_code(qr_data)
     barcode_base64 = generate_barcode(final_label_code)
+
     label = Label(
         compound_id=weighing_data.compound_id,
         usage_id=usage.id,
         label_code=final_label_code,
-        compound_name=compound['name'],
-        cas_number=compound['cas_number'],
+        compound_name=compound["name"],
+        cas_number=compound["cas_number"],
         concentration=f"{actual_concentration_ppm} ppm",
         prepared_by=weighing_data.prepared_by,
         date=date_str,
         qr_data=qr_data
     )
     await db.labels.insert_one(label.model_dump())
+
     await db.audit_logs.insert_one({
         "id": str(uuid.uuid4()),
         "user": current_user.username,
@@ -905,290 +846,65 @@ async def create_weighing(
         "label_code": final_label_code,
         "timestamp": datetime.now(ISTANBUL_TZ).isoformat()
     })
-    return {
-        "usage": usage.model_dump(),
-        "label": label.model_dump(),
-        "qr_code": qr_base64,
-        "barcode": barcode_base64
-    }
 
-# === COMPOUND EXPORT / IMPORT / CLEAR ===
+    return {"usage": usage.model_dump(), "label": label.model_dump(), "qr_code": qr_base64, "barcode": barcode_base64}
 
-@api_router.get("/compounds/export")
-async def export_compounds(
-    format: str = Query("xlsx", regex="^(xlsx|csv|json)$"),
-    q: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
-    query = {}
-    if q:
-        query = {
-            "$or": [
-                {"name": {"$regex": q, "$options": "i"}},
-                {"cas_number": {"$regex": q, "$options": "i"}}
-            ]
-        }
-    compounds = await db.compounds.find(query, {"_id": 0}).to_list(10000)
-    if format == "json":
-        return compounds
-    elif format == "csv":
-        import csv
-        output = io.StringIO()
-        if compounds:
-            fieldnames = ["name", "cas_number", "solvent", "stock_value", "stock_unit", "critical_value", "critical_unit", "aliases"]
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
-            writer.writeheader()
-            for c in compounds:
-                writer.writerow({
-                    "name": c.get("name", ""),
-                    "cas_number": c.get("cas_number", ""),
-                    "solvent": c.get("solvent", ""),
-                    "stock_value": c.get("stock_value", 0),
-                    "stock_unit": c.get("stock_unit", "mg"),
-                    "critical_value": c.get("critical_value", 0),
-                    "critical_unit": c.get("critical_unit", "mg"),
-                    "aliases": ", ".join(c.get("aliases", []))
-                })
-        return StreamingResponse(
-            iter([output.getvalue()]),
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=compounds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
-        )
-    else:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Compounds"
-        headers = ["Name", "CAS Number", "Solvent", "Stock Value", "Stock Unit", "Critical Level", "Critical Unit", "Aliases"]
-        ws.append(headers)
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
-        for c in compounds:
-            ws.append([
-                c.get("name", ""),
-                c.get("cas_number", ""),
-                c.get("solvent", ""),
-                c.get("stock_value", 0),
-                c.get("stock_unit", "mg"),
-                c.get("critical_value", 0),
-                c.get("critical_unit", "mg"),
-                ", ".join(c.get("aliases", []))
-            ])
-        for column in ws.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=compounds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
-        )
-
-@api_router.post("/compounds/clear")
-async def clear_all_compounds(current_user: User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admin can clear all compounds")
-    compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
-    result = await db.compounds.delete_many({})
-    await db.audit_logs.insert_one({
-        "id": str(uuid.uuid4()),
-        "user": current_user.username,
-        "action": "clear_all_compounds",
-        "compounds_count": result.deleted_count,
-        "timestamp": datetime.now(ISTANBUL_TZ).isoformat()
-    })
-    return {
-        "message": f"Successfully deleted {result.deleted_count} compounds",
-        "backup_data": compounds,
-        "deleted_count": result.deleted_count
-    }
-
-# === USAGE & LABEL ROUTES ===
-
-@api_router.get("/usages", response_model=List[Usage])
-async def get_usages(
-    compound_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
-    try:
-        query = {}
-        if compound_id:
-            query['compound_id'] = compound_id
-        usages = await db.usages.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-        return [Usage(**u) for u in usages]
-    except Exception as e:
-        logger.error(f"Error fetching usages: {str(e)}")
-        return []
-
-@api_router.get("/weighings")
-async def get_weighings(
-    limit: int = Query(default=100, le=1000),
-    current_user: User = Depends(get_current_user)
-):
-    try:
-        usages = await db.usages.find({}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
-        total = await db.usages.count_documents({})
-        return {
-            "status": "success",
-            "data": usages,
-            "total": total,
-            "limit": limit
-        }
-    except Exception as e:
-        logger.error(f"Error fetching weighings: {str(e)}")
-        raise HTTPException(status_code=500, detail={"error": "list_failed", "detail": str(e)})
-
-@api_router.get("/labels", response_model=List[Label])
-async def get_labels(current_user: User = Depends(get_current_user)):
-    labels = await db.labels.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return [Label(**label_data) for label_data in labels]
-
-@api_router.get("/labels/{label_id}")
-async def get_label_with_codes(label_id: str, current_user: User = Depends(get_current_user)):
-    label = await db.labels.find_one({"id": label_id}, {"_id": 0})
-    if not label:
-        raise HTTPException(status_code=404, detail="Label not found")
-    qr_base64 = generate_qr_code(label['qr_data'])
-    barcode_base64 = generate_barcode(label['label_code'])
-    return {
-        "label": label,
-        "qr_code": qr_base64,
-        "barcode": barcode_base64
-    }
-
-# === DASHBOARD ===
-
-@api_router.get("/dashboard")
-async def get_dashboard(current_user: User = Depends(get_current_user)):
-    all_compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
-    critical_stocks = []
-    for comp in all_compounds:
-        if comp['stock_value'] <= comp['critical_value']:
-            critical_stocks.append(comp)
-    recent_usages = await db.usages.find({}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
-    total_compounds = len(all_compounds)
-    total_usages = await db.usages.count_documents({})
-    total_labels = await db.labels.count_documents({})
-    return {
-        "total_compounds": total_compounds,
-        "total_usages": total_usages,
-        "total_labels": total_labels,
-        "critical_stocks": critical_stocks,
-        "recent_usages": recent_usages
-    }
-
-# === SEARCH ===
-
-@api_router.get("/search")
-async def search(
-    q: str = Query(..., min_length=1),
-    current_user: User = Depends(get_current_user)
-):
-    compounds = await db.compounds.find({
-        "$or": [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"cas_number": {"$regex": q, "$options": "i"}}
-        ]
-    }, {"_id": 0}).to_list(100)
-    usages = await db.usages.find({
-        "$or": [
-            {"compound_name": {"$regex": q, "$options": "i"}},
-            {"cas_number": {"$regex": q, "$options": "i"}}
-        ]
-    }, {"_id": 0}).to_list(100)
-    return {"compounds": compounds, "usages": usages}
-
-@api_router.get("/search/fuzzy")
-async def fuzzy_search(
-    q: str = Query(..., min_length=1),
-    limit: int = Query(default=20, le=100),
-    current_user: User = Depends(get_current_user)
-):
-    all_compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
-    scored_compounds = []
-    for compound in all_compounds:
-        score = calculate_search_score(q, compound['name'], compound['cas_number'])
-        if score > 0:
-            compound['search_score'] = score
-            scored_compounds.append(compound)
-    scored_compounds.sort(key=lambda x: x['search_score'], reverse=True)
-    return {"query": q, "total_matches": len(scored_compounds), "compounds": scored_compounds[:limit]}
-
-# === EXPORT ENDPOINTS ===
-
+# ==== EXPORTS ====
 @api_router.get("/weighings/export.xlsx")
-async def export_weighings_excel(
-    compound_id: Optional[str] = None,
-    search_query: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
+async def export_weighings_excel(compound_id: Optional[str] = None, search_query: Optional[str] = None, current_user: User = Depends(get_current_user)):
     try:
-        query = {}
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+        query: Dict[str, Any] = {}
         if compound_id:
-            query['compound_id'] = compound_id
+            query["compound_id"] = compound_id
         if search_query:
-            query['$or'] = [
-                {'compound_name': {'$regex': search_query, '$options': 'i'}},
-                {'cas_number': {'$regex': search_query, '$options': 'i'}},
-                {'prepared_by': {'$regex': search_query, '$options': 'i'}}
+            query["$or"] = [
+                {"compound_name": {"$regex": search_query, "$options": "i"}},
+                {"cas_number": {"$regex": search_query, "$options": "i"}},
+                {"prepared_by": {"$regex": search_query, "$options": "i"}}
             ]
-        usages = await db.usages.find(query, {'_id': 0}).sort('created_at', -1).to_list(None)
+        usages = await db.usages.find(query, {"_id": 0}).sort("created_at", -1).to_list(None)
+
         wb = Workbook()
         wb.remove(wb.active)
-        EXCEL_MAX_ROWS = 1_048_576
-        HEADERS = ['Date', 'Compound', 'CAS Number', 'Weighed (mg)', 'Purity (%)', 
-                   'Target (ppm)', 'Req. Volume (mL)', 'Actual (ppm)', 'Deviation (%)',
-                   'Temperature (°C)', 'Density (g/mL)', 'Prepared By', 'Mix Code', 'Label Code']
-        sheet_index, row_count, ws = 1, 0, None
+        HEADERS = ["Date","Compound","CAS Number","Weighed (mg)","Purity (%)","Target (ppm)","Req. Volume (mL)","Actual (ppm)","Deviation (%)","Temperature (°C)","Density (g/mL)","Prepared By","Mix Code","Label Code"]
+
         if not usages:
             ws = wb.create_sheet("Weighing Records")
             ws.append(HEADERS)
             for cell in ws[1]:
                 cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal='center')
+                cell.alignment = Alignment(horizontal="center")
             ws.append(["No weighing records found matching the criteria."])
-        for idx, usage in enumerate(usages):
-            if row_count == 0 or row_count >= EXCEL_MAX_ROWS - 1:
-                ws = wb.create_sheet(f"Weighing Records {sheet_index}")
-                sheet_index += 1
-                row_count = 0
-                ws.append(HEADERS)
-                for cell in ws[1]:
-                    cell.font = Font(bold=True)
-                    cell.alignment = Alignment(horizontal='center')
-                row_count += 1
-            ws.append([
-                usage.get('created_at', '')[:10] if usage.get('created_at') else '',
-                usage.get('compound_name', ''),
-                usage.get('cas_number', ''),
-                usage.get('weighed_amount', 0),
-                usage.get('purity', 0),
-                usage.get('target_concentration', 0),
-                usage.get('required_volume', 0),
-                usage.get('actual_concentration', 0),
-                usage.get('deviation', 0),
-                usage.get('temperature_c', 0),
-                usage.get('solvent_density', 0),
-                usage.get('prepared_by', ''),
-                usage.get('mix_code', ''),
-                usage.get('label_code_used', '')
-            ])
-            row_count += 1
+        else:
+            ws = wb.create_sheet("Weighing Records 1")
+            ws.append(HEADERS)
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal="center")
+            for usage in usages:
+                ws.append([
+                    usage.get("created_at","")[:10] if usage.get("created_at") else "",
+                    usage.get("compound_name",""),
+                    usage.get("cas_number",""),
+                    usage.get("weighed_amount",0),
+                    usage.get("purity",0),
+                    usage.get("target_concentration",0),
+                    usage.get("required_volume",0),
+                    usage.get("actual_concentration",0),
+                    usage.get("deviation",0),
+                    usage.get("temperature_c",0),
+                    usage.get("solvent_density",0),
+                    usage.get("prepared_by",""),
+                    usage.get("mix_code",""),
+                    usage.get("label_code_used","")
+                ])
+
         excel_buffer = BytesIO()
         wb.save(excel_buffer)
         excel_buffer.seek(0)
+
         timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
         filename = f"WeighingRecords_{timestamp}.xlsx"
         return StreamingResponse(
@@ -1200,118 +916,116 @@ async def export_weighings_excel(
         logger.error(f"Excel export error: {str(e)}")
         raise HTTPException(status_code=500, detail={"error": "export_xlsx_failed", "detail": str(e)})
 
+@api_router.get("/labels", response_model=List[Label])
+async def get_labels(current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    labels = await db.labels.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return [Label(**label_data) for label_data in labels]
+
+@api_router.get("/labels/{label_id}")
+async def get_label_with_codes(label_id: str, current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    label = await db.labels.find_one({"id": label_id}, {"_id": 0})
+    if not label:
+        raise HTTPException(status_code=404, detail="Label not found")
+    qr_base64 = generate_qr_code(label["qr_data"])
+    barcode_base64 = generate_barcode(label["label_code"])
+    return {"label": label, "qr_code": qr_base64, "barcode": barcode_base64}
+
 @api_router.get("/labels/export.pdf")
-async def export_labels_pdf(
-    compound_id: Optional[str] = None,
-    search_query: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
+async def export_labels_pdf(compound_id: Optional[str] = None, search_query: Optional[str] = None, current_user: User = Depends(get_current_user)):
     try:
-        query = {}
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+        query: Dict[str, Any] = {}
         if compound_id:
-            query['compound_id'] = compound_id
+            query["compound_id"] = compound_id
         if search_query:
-            query['$or'] = [
-                {'compound_name': {'$regex': search_query, '$options': 'i'}},
-                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            query["$or"] = [
+                {"compound_name": {"$regex": search_query, "$options": "i"}},
+                {"cas_number": {"$regex": search_query, "$options": "i"}}
             ]
-        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+        labels = await db.labels.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+        pdf_buffer = BytesIO()
         if not labels:
-            pdf_buffer = BytesIO()
             c = canvas.Canvas(pdf_buffer, pagesize=A4)
             c.setFont("Helvetica", 12)
             c.drawString(100, 750, "No labels found matching the criteria.")
             c.save()
-            pdf_buffer.seek(0)
-            timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
-            filename = f"Labels_{timestamp}.pdf"
-            return StreamingResponse(
-                pdf_buffer,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename={filename}"}
-            )
-        pdf_buffer = BytesIO()
-        c = canvas.Canvas(pdf_buffer, pagesize=(70*mm, 25*mm))
-        for label in labels:
-            qr_base64 = generate_qr_code(label['qr_data'])
-            barcode_base64 = generate_barcode(label['label_code'])
-            qr_img = ImageReader(BytesIO(base64.b64decode(qr_base64)))
-            barcode_img = ImageReader(BytesIO(base64.b64decode(barcode_base64)))
-            c.setFont("Helvetica-Bold", 8)
-            c.drawString(5, 20*mm, label['compound_name'][:30])
-            c.setFont("Helvetica", 6)
-            c.drawString(5, 17*mm, f"CAS: {label['cas_number']} • Conc.: {label['concentration']}")
-            c.drawString(5, 14*mm, f"Date: {label['date']} • By: {label['prepared_by']}")
-            c.setFont("Helvetica-Bold", 7)
-            c.drawString(5, 3*mm, f"Code: {label['label_code']}")
-            c.drawImage(qr_img, 50*mm, 3*mm, width=12*mm, height=12*mm)
-            c.drawImage(barcode_img, 50*mm, 16*mm, width=18*mm, height=8*mm)
-            c.showPage()
-        c.save()
+        else:
+            c = canvas.Canvas(pdf_buffer, pagesize=(70*mm, 25*mm))
+            for label in labels:
+                qr_base64 = generate_qr_code(label["qr_data"])
+                barcode_base64 = generate_barcode(label["label_code"])
+                qr_img = ImageReader(BytesIO(base64.b64decode(qr_base64)))
+                barcode_img = ImageReader(BytesIO(base64.b64decode(barcode_base64)))
+
+                c.setFont("Helvetica-Bold", 8)
+                c.drawString(5, 20*mm, label["compound_name"][:30])
+                c.setFont("Helvetica", 6)
+                c.drawString(5, 17*mm, f"CAS: {label['cas_number']} • Conc.: {label['concentration']}")
+                c.drawString(5, 14*mm, f"Date: {label['date']} • By: {label['prepared_by']}")
+                c.setFont("Helvetica-Bold", 7)
+                c.drawString(5, 3*mm, f"Code: {label['label_code']}")
+                c.drawImage(qr_img, 50*mm, 3*mm, width=12*mm, height=12*mm)
+                c.drawImage(barcode_img, 50*mm, 16*mm, width=18*mm, height=8*mm)
+                c.showPage()
+            c.save()
+
         pdf_buffer.seek(0)
         timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
         filename = f"Labels_{timestamp}.pdf"
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        return StreamingResponse(pdf_buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
     except Exception as e:
         logger.error(f"PDF export error: {str(e)}")
         raise HTTPException(status_code=500, detail={"error": "export_labels_pdf_failed", "detail": str(e)})
 
 @api_router.get("/labels/export.docx")
-async def export_labels_docx(
-    compound_id: Optional[str] = None,
-    search_query: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
+async def export_labels_docx(compound_id: Optional[str] = None, search_query: Optional[str] = None, current_user: User = Depends(get_current_user)):
     try:
-        query = {}
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+        query: Dict[str, Any] = {}
         if compound_id:
-            query['compound_id'] = compound_id
+            query["compound_id"] = compound_id
         if search_query:
-            query['$or'] = [
-                {'compound_name': {'$regex': search_query, '$options': 'i'}},
-                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            query["$or"] = [
+                {"compound_name": {"$regex": search_query, "$options": "i"}},
+                {"cas_number": {"$regex": search_query, "$options": "i"}}
             ]
-        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
+        labels = await db.labels.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+        doc = DocxDocument()
         if not labels:
-            doc = DocxDocument()
-            title = doc.add_heading('PestiLab – Weighing Labels', 0)
+            title = doc.add_heading("PestiLab – Weighing Labels", 0)
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
             doc.add_paragraph("No labels found matching the criteria.")
-            docx_buffer = BytesIO()
-            doc.save(docx_buffer)
-            docx_buffer.seek(0)
-            timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
-            filename = f"Labels_{timestamp}.docx"
-            return StreamingResponse(
-                docx_buffer,
-                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                headers={"Content-Disposition": f"attachment; filename={filename}"}
-            )
-        doc = DocxDocument()
-        for idx, label in enumerate(labels):
-            usage = await db.usages.find_one({'id': label['usage_id']}, {'_id': 0})
-            title = doc.add_heading('PestiLab – Weighing Label', 0)
-            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            doc.add_paragraph(f"Compound: {label['compound_name']}")
-            doc.add_paragraph(f"CAS Number: {label['cas_number']}")
-            doc.add_paragraph(f"Concentration: {label['concentration']}")
-            doc.add_paragraph(f"Label Code: {label['label_code']}")
-            if usage:
-                doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
-                doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
-                doc.add_paragraph(f"Required Volume: {usage.get('required_volume', 0):.3f} mL")
-                doc.add_paragraph(f"Temperature: {usage.get('temperature_c', 0):.1f}°C")
-                doc.add_paragraph(f"Solvent Density: {usage.get('solvent_density', 0):.4f} g/mL")
-                if usage.get('mix_code'):
-                    doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
-            doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
-            doc.add_paragraph(f"Date: {label['date']}")
-            if idx < len(labels) - 1:
-                doc.add_page_break()
+        else:
+            for idx, label in enumerate(labels):
+                title = doc.add_heading("PestiLab – Weighing Label", 0)
+                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                usage = await db.usages.find_one({"id": label["usage_id"]}, {"_id": 0})
+
+                doc.add_paragraph(f"Compound: {label['compound_name']}")
+                doc.add_paragraph(f"CAS Number: {label['cas_number']}")
+                doc.add_paragraph(f"Concentration: {label['concentration']}")
+                doc.add_paragraph(f"Label Code: {label['label_code']}")
+                if usage:
+                    doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
+                    doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
+                    doc.add_paragraph(f"Required Volume: {usage.get('required_volume', 0):.3f} mL")
+                    doc.add_paragraph(f"Temperature: {usage.get('temperature_c', 0):.1f}°C")
+                    doc.add_paragraph(f"Solvent Density: {usage.get('solvent_density', 0):.4f} g/mL")
+                    if usage.get("mix_code"):
+                        doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
+                doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
+                doc.add_paragraph(f"Date: {label['date']}")
+                if idx < len(labels) - 1:
+                    doc.add_page_break()
+
         docx_buffer = BytesIO()
         doc.save(docx_buffer)
         docx_buffer.seek(0)
@@ -1327,118 +1041,145 @@ async def export_labels_docx(
         raise HTTPException(status_code=500, detail={"error": "export_labels_docx_failed", "detail": str(e)})
 
 @api_router.get("/labels/export-docx.zip")
-async def export_labels_docx_zip(
-    compound_id: Optional[str] = None,
-    search_query: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
+async def export_labels_docx_zip(compound_id: Optional[str] = None, search_query: Optional[str] = None, current_user: User = Depends(get_current_user)):
     try:
-        query = {}
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+        query: Dict[str, Any] = {}
         if compound_id:
-            query['compound_id'] = compound_id
+            query["compound_id"] = compound_id
         if search_query:
-            query['$or'] = [
-                {'compound_name': {'$regex': search_query, '$options': 'i'}},
-                {'cas_number': {'$regex': search_query, '$options': 'i'}}
+            query["$or"] = [
+                {"compound_name": {"$regex": search_query, "$options": "i"}},
+                {"cas_number": {"$regex": search_query, "$options": "i"}}
             ]
-        labels = await db.labels.find(query, {'_id': 0}).sort('created_at', -1).to_list(1000)
-        if not labels:
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                message = "No labels found matching the criteria."
-                zip_file.writestr("no_labels_found.txt", message)
-            zip_buffer.seek(0)
-            timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
-            filename = f"Labels_{timestamp}.zip"
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={filename}"}
-            )
+        labels = await db.labels.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
         zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for label in labels:
-                usage = await db.usages.find_one({'id': label['usage_id']}, {'_id': 0})
-                doc = DocxDocument()
-                title = doc.add_heading('PestiLab – Weighing Label', 0)
-                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                doc.add_paragraph(f"Compound: {label['compound_name']}")
-                doc.add_paragraph(f"CAS Number: {label['cas_number']}")
-                doc.add_paragraph(f"Concentration: {label['concentration']}")
-                doc.add_paragraph(f"Label Code: {label['label_code']}")
-                if usage:
-                    doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
-                    doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
-                    if usage.get('mix_code'):
-                        doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
-                doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
-                doc.add_paragraph(f"Date: {label['date']}")
-                doc_buffer = BytesIO()
-                doc.save(doc_buffer)
-                doc_buffer.seek(0)
-                filename = f"Label_{label['label_code'].replace('/', '_')}.docx"
-                zip_file.writestr(filename, doc_buffer.getvalue())
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            if not labels:
+                zip_file.writestr("no_labels_found.txt", "No labels found matching the criteria.")
+            else:
+                for label in labels:
+                    usage = await db.usages.find_one({"id": label["usage_id"]}, {"_id": 0})
+                    doc = DocxDocument()
+                    title = doc.add_heading("PestiLab – Weighing Label", 0)
+                    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    doc.add_paragraph(f"Compound: {label['compound_name']}")
+                    doc.add_paragraph(f"CAS Number: {label['cas_number']}")
+                    doc.add_paragraph(f"Concentration: {label['concentration']}")
+                    doc.add_paragraph(f"Label Code: {label['label_code']}")
+                    if usage:
+                        doc.add_paragraph(f"Weighed Amount: {usage.get('weighed_amount', 0):.3f} mg")
+                        doc.add_paragraph(f"Purity: {usage.get('purity', 0):.1f}%")
+                        if usage.get("mix_code"):
+                            doc.add_paragraph(f"Mix Code: {usage['mix_code']}")
+                    doc.add_paragraph(f"Prepared By: {label['prepared_by']}")
+                    doc.add_paragraph(f"Date: {label['date']}")
+                    doc_buffer = BytesIO()
+                    doc.save(doc_buffer)
+                    doc_buffer.seek(0)
+                    filename = f"Label_{label['label_code'].replace('/', '_')}.docx"
+                    zip_file.writestr(filename, doc_buffer.getvalue())
+
         zip_buffer.seek(0)
         timestamp = datetime.now(ISTANBUL_TZ).strftime("%Y%m%d_%H%M")
         filename = f"Labels_{timestamp}.zip"
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        return StreamingResponse(zip_buffer, media_type="application/zip", headers={"Content-Disposition": f"attachment; filename={filename}"})
     except Exception as e:
         logger.error(f"DOCX ZIP export error: {str(e)}")
         raise HTTPException(status_code=500, detail={"error": "export_labels_docx_zip_failed", "detail": str(e)})
 
-# Include the router in the main app
+# ==== DASHBOARD & SEARCH ====
+@api_router.get("/dashboard")
+async def get_dashboard(current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    all_compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
+    critical_stocks = [c for c in all_compounds if c["stock_value"] <= c["critical_value"]]
+    recent_usages = await db.usages.find({}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
+    total_compounds = len(all_compounds)
+    total_usages = await db.usages.count_documents({})
+    total_labels = await db.labels.count_documents({})
+    return {
+        "total_compounds": total_compounds,
+        "total_usages": total_usages,
+        "total_labels": total_labels,
+        "critical_stocks": critical_stocks,
+        "recent_usages": recent_usages
+    }
+
+@api_router.get("/search")
+async def search(q: str = Query(..., min_length=1), current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    compounds = await db.compounds.find({
+        "$or": [{"name": {"$regex": q, "$options": "i"}}, {"cas_number": {"$regex": q, "$options": "i"}}]
+    }, {"_id": 0}).to_list(100)
+    usages = await db.usages.find({
+        "$or": [{"compound_name": {"$regex": q, "$options": "i"}}, {"cas_number": {"$regex": q, "$options": "i"}}]
+    }, {"_id": 0}).to_list(100)
+    return {"compounds": compounds, "usages": usages}
+
+@api_router.get("/search/fuzzy")
+async def fuzzy_search(q: str = Query(..., min_length=1), limit: int = Query(default=20, le=100), current_user: User = Depends(get_current_user)):
+    if not db:
+        raise HTTPException(status_code=500, detail="DB not configured")
+    all_compounds = await db.compounds.find({}, {"_id": 0}).to_list(10000)
+    scored_compounds = []
+    for compound in all_compounds:
+        score = calculate_search_score(q, compound["name"], compound["cas_number"])
+        if score > 0:
+            compound["search_score"] = score
+            scored_compounds.append(compound)
+    scored_compounds.sort(key=lambda x: x["search_score"], reverse=True)
+    return {"query": q, "total_matches": len(scored_compounds), "compounds": scored_compounds[:limit]}
+
+# ==== ROUTER + CORS ====
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# ==== LOGGING ====
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# ==== LIFECYCLE ====
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    if client:
+        client.close()
 
-# Initialize admin user and default solvent densities on startup
 @app.on_event("startup")
 async def initialize_defaults():
+    if not db:
+        logger.warning("DB not configured; skipping defaults")
+        return
+    # admin
     admin_exists = await db.users.find_one({"username": "admin"})
     if not admin_exists:
-        hashed_password = bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt())
-        admin_user = User(
-            username="admin",
-            email="admin@pestilab.com",
-            role="admin"
-        )
+        hashed_password = bcrypt.hashpw("admin123".encode("utf-8"), bcrypt.gensalt())
+        admin_user = User(username="admin", email="admin@pestilab.com", role="admin")
         doc = admin_user.model_dump()
-        doc['password'] = hashed_password.decode('utf-8')
+        doc["password"] = hashed_password.decode("utf-8")
         await db.users.insert_one(doc)
         logger.info("Admin user created: username=admin, password=admin123")
+    # test user
     test_user_exists = await db.users.find_one({"username": "pestical"})
     if not test_user_exists:
-        hashed_password = bcrypt.hashpw("aceta135410207".encode('utf-8'), bcrypt.gensalt())
-        test_user = User(
-            username="pestical",
-            email="pestical@pestilab.com",
-            role="analyst"
-        )
+        hashed_password = bcrypt.hashpw("aceta135410207".encode("utf-8"), bcrypt.gensalt())
+        test_user = User(username="pestical", email="pestical@pestilab.com", role="analyst")
         doc = test_user.model_dump()
-        doc['password'] = hashed_password.decode('utf-8')
+        doc["password"] = hashed_password.decode("utf-8")
         await db.users.insert_one(doc)
         logger.info("Test user created: username=pestical, password=aceta135410207")
+    # densities
     density_count = await db.solvent_densities.count_documents({})
     if density_count == 0:
         default_densities = [
@@ -1464,8 +1205,29 @@ async def initialize_defaults():
             await db.solvent_densities.insert_one(density.model_dump())
         logger.info(f"Initialized {len(default_densities)} default solvent density values")
 
-# Optional: allow running with `python backend/server.py`
-if __name__ == "__main__":
-    import uvicorn, os
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# ==== HEALTH (root + api) ====
+@app.get("/")
+async def root_health():
+    return {"ok": True, "service": "pestilab-api", "path": "/"}
+
+@app.get("/health")
+async def plain_health():
+    db_ok = False
+    try:
+        if db:
+            await db.command("ping")
+            db_ok = True
+    except Exception:
+        db_ok = False
+    return {"ok": True, "service": "pestilab-api", "path": "/health", "db_ok": db_ok}
+
+@api_router.get("/health")
+async def api_health():
+    db_ok = False
+    try:
+        if db:
+            await db.command("ping")
+            db_ok = True
+    except Exception:
+        db_ok = False
+    return {"ok": True, "service": "pestilab-api", "path": "/api/health", "db_ok": db_ok}
