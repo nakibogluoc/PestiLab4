@@ -2,7 +2,11 @@
   "rewrites": [
     {
       "source": "/login",
-      "destination": "https://pestilab-api.onrender.com/login"
+      "destination": "https://pestilab-api.onrender.com/api/auth/login"
+    },
+    {
+      "source": "/auth/login",
+      "destination": "https://pestilab-api.onrender.com/api/auth/login"
     },
     {
       "source": "/api/(.*)",
@@ -11,16 +15,6 @@
     {
       "source": "/(.*)",
       "destination": "/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
-      ]
     }
   ]
 }
