@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://pesti-lab4.vercel.app/api/$1"
+      "destination": "https://pestilab-api.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
