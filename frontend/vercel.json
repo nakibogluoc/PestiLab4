@@ -2,15 +2,15 @@
   "rewrites": [
     {
       "source": "/login",
-      "destination": "https://pestilab-api.onrender.com/api/auth/login"
+      "destination": "https://pestilab4.onrender.com/api/auth/login"
     },
     {
       "source": "/auth/login",
-      "destination": "https://pestilab-api.onrender.com/api/auth/login"
+      "destination": "https://pestilab4.onrender.com/api/auth/login"
     },
     {
       "source": "/api/(.*)",
-      "destination": "https://pestilab-api.onrender.com/api/$1"
+      "destination": "https://pestilab4.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
